@@ -88,6 +88,8 @@ export function modifySimpleEvent(options: EventTimeChangeOptions): void {
     end: newEnd,
     isAllDay,
   });
+  // One revision, one SEQUENCE - see bumpEventSequence.
+  event.ics = ICSEventHelpers.bumpEventSequence(event.ics);
 
   // Update cached fields
   event.recurrenceStart = newStart;
@@ -122,7 +124,7 @@ export function createOccurrenceException(options: EventTimeChangeOptions): void
   const masterUndoData = captureEventSnapshot(masterEvent);
 
   // Embed the exception VEVENT inline in the master VCALENDAR
-  const { masterIcs } = ICSEventHelpers.createRecurrenceException(
+  const { masterIcs, recurrenceId } = ICSEventHelpers.createRecurrenceException(
     masterEvent.ics,
     originalOccurrenceStart,
     newStart,
@@ -130,8 +132,9 @@ export function createOccurrenceException(options: EventTimeChangeOptions): void
     isAllDay
   );
 
-  // Update master event ICS (now contains the inline exception VEVENT)
-  masterEvent.ics = masterIcs;
+  // The revision is to this occurrence, so the exception's SEQUENCE advances, not the
+  // master's - the rest of the series is unchanged and shouldn't claim otherwise.
+  masterEvent.ics = ICSEventHelpers.bumpEventSequence(masterIcs, recurrenceId);
   masterEvent.recurrenceStart = newStart;
   masterEvent.recurrenceEnd = newEnd;
 
@@ -171,6 +174,7 @@ export function modifyAllOccurrences(options: EventTimeChangeOptions): void {
   if (deltaMs !== 0) {
     event.ics = ICSEventHelpers.shiftInlineExceptions(event.ics, deltaMs);
   }
+  event.ics = ICSEventHelpers.bumpEventSequence(event.ics);
 
   // Re-parse to get the new master times
   const { event: icsEvent } = CalendarUtils.parseICSString(event.ics);

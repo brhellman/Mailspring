@@ -101,6 +101,7 @@ export default class MailsyncBridge {
     Actions.queueTasks.listen(this._onQueueTasks, this);
     Actions.cancelTask.listen(this._onCancelTask, this);
     Actions.fetchBodies.listen(this._onFetchBodies, this);
+    Actions.syncCalendarNow.listen(this.sendSyncCalendarNow, this);
 
     AccountStore.listen(this.ensureClients, this);
 
