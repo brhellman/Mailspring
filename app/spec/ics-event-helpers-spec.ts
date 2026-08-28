@@ -1835,16 +1835,13 @@ describe('SEQUENCE, so guests see an update as an update', function () {
   });
 
   it('advances an event that never had one, since absent means zero', function () {
-    // RFC 5545 section 3.7.4. Every event this client created before now lacked SEQUENCE,
-    // and a bump guarded on the property already existing silently did nothing, so guests
-    // ignored the update.
+    // RFC 5545 section 3.7.4.
     const noSeq = SIMPLE_ICS.replace('SEQUENCE:0\r\n', '').replace('SEQUENCE:0\n', '');
     expect(seq(ICSEventHelpers.bumpEventSequence(noSeq))).toBe(1);
   });
 
   it('advances once for a save that touched times, guests and recurrence together', function () {
-    // The whole point of moving the bump out of the helpers: the popover runs all three on
-    // one save, and a bump inside each made SEQUENCE jump by three for a single revision.
+    // The popover runs all three on one save, which is still one revision.
     let ics = ICSEventHelpers.updateEventTimes(SIMPLE_ICS, {
       start: Math.round(new Date('2026-03-01T16:00:00Z').getTime() / 1000),
       end: Math.round(new Date('2026-03-01T17:00:00Z').getTime() / 1000),
@@ -1967,9 +1964,8 @@ describe('ICSEventHelpers VTIMEZONE bookkeeping', function () {
     [...new Set((ics.match(/TZID=([^:;]*)/g) || []).map((m) => m.replace('TZID=', '')))].sort();
 
   it('keeps a VTIMEZONE for every zone the calendar still references', function () {
-    // Retiming the master into another zone leaves the inline exception in Berlin. Replacing
-    // the whole VTIMEZONE set - which is what this used to do - left that TZID pointing at
-    // nothing, which a strict parser may reject and a lenient one reads as floating time.
+    // Retiming the master into another zone leaves the inline exception in Berlin; a TZID
+    // with no VTIMEZONE is rejected by a strict parser and read as floating by a lenient one.
     const out = ICSEventHelpers.updateEventTimes(RECURRING_BERLIN_WITH_EXCEPTION, {
       start: Math.round(new Date('2024-01-15T16:00:00Z').getTime() / 1000),
       end: Math.round(new Date('2024-01-15T17:00:00Z').getTime() / 1000),
@@ -2032,8 +2028,7 @@ describe('ICSEventHelpers with Windows timezone identifiers', function () {
   });
 
   it('writes the right instant for an event created in a Windows-named zone', function () {
-    // 09:00 in Central Standard Time is 15:00Z in January. Before the mapping, moment fell
-    // back to the machine's zone and this landed at 09:00 local instead.
+    // 09:00 in Central Standard Time is 15:00Z in January.
     const ics = ICSEventHelpers.createICSString({
       summary: 'Outlook meeting',
       start: new Date('2024-01-15T15:00:00Z'),
@@ -2054,6 +2049,85 @@ describe('ICSEventHelpers with Windows timezone identifiers', function () {
     });
     expect(ics).toContain('DTSTART:20240115T150000Z');
     expect(ics).not.toContain('TZID=Middle Earth Time');
+  });
+});
+
+describe('a TZID whose VTIMEZONE the server omitted', function () {
+  // RFC 7809 lets a server leave the VTIMEZONE out for an IANA zone; every value below still
+  // carries TZID=Europe/Vienna. The runner is pinned to America/Chicago, where a floating 17:00
+  // is 22:00Z; Vienna's 17:00 on 17 September is 15:00Z.
+  const VIENNA_NO_VTIMEZONE = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//Test//Test//EN',
+    'BEGIN:VEVENT',
+    'UID:vienna-series@test',
+    'DTSTART;TZID=Europe/Vienna:20260903T170000',
+    'DTEND;TZID=Europe/Vienna:20260903T173000',
+    'RRULE:FREQ=WEEKLY;INTERVAL=2;BYDAY=TH',
+    'EXDATE;TZID=Europe/Vienna:20261001T170000',
+    'SUMMARY:management sync',
+    'DTSTAMP:20260101T000000Z',
+    'SEQUENCE:2',
+    'END:VEVENT',
+    'BEGIN:VEVENT',
+    'UID:vienna-series@test',
+    'RECURRENCE-ID;TZID=Europe/Vienna:20260917T170000',
+    'DTSTART;TZID=Europe/Vienna:20260924T170000',
+    'DTEND;TZID=Europe/Vienna:20260924T173000',
+    'SUMMARY:management sync',
+    'DTSTAMP:20260101T000000Z',
+    'SEQUENCE:2',
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ].join('\r\n');
+  const QUARTER_HOUR = 15 * 60 * 1000;
+
+  beforeEach(function () {
+    // Registrations are process-wide, so a fixture in another spec must not stand in for this one.
+    ICAL.TimezoneService.remove('Europe/Vienna');
+    expect(ICAL.TimezoneService.has('Europe/Vienna')).toBe(false);
+  });
+
+  it('shifts a zoned RECURRENCE-ID and EXDATE on their own wall clock', function () {
+    const shifted = ICSEventHelpers.shiftInlineExceptions(VIENNA_NO_VTIMEZONE, QUARTER_HOUR);
+    expect(shifted).toContain('RECURRENCE-ID;TZID=Europe/Vienna:20260917T171500');
+    expect(shifted).toContain('EXDATE;TZID=Europe/Vienna:20261001T171500');
+    expect(shifted).not.toMatch(/TZID=Europe\/Vienna:\d{8}T\d{6}Z/);
+  });
+
+  it('reads a zoned RECURRENCE-ID as the instant it names', function () {
+    // The row stores the exception's RECURRENCE-ID in UTC, so this only matches when 17:00
+    // Vienna is read as 15:00Z rather than as 17:00 wherever the machine is.
+    const result = ICSEventHelpers.removeInlineException(VIENNA_NO_VTIMEZONE, '20260917T150000Z');
+    expect(result).not.toContain('RECURRENCE-ID');
+    expect(result).toContain('EXDATE;TZID=Europe/Vienna:20260917T170000');
+  });
+
+  it('follows the VTIMEZONE a file does carry rather than describing the zone itself', function () {
+    // A deliberately wrong zone in the file: Europe/Vienna at a fixed +05:00, so 17:00 is 12:00Z.
+    const WRONG_OFFSET = VIENNA_NO_VTIMEZONE.replace(
+      'BEGIN:VEVENT',
+      [
+        'BEGIN:VTIMEZONE',
+        'TZID:Europe/Vienna',
+        'BEGIN:STANDARD',
+        'DTSTART:19700101T000000',
+        'TZOFFSETFROM:+0500',
+        'TZOFFSETTO:+0500',
+        'END:STANDARD',
+        'END:VTIMEZONE',
+        'BEGIN:VEVENT',
+      ].join('\r\n')
+    );
+    const result = ICSEventHelpers.removeInlineException(WRONG_OFFSET, '20260917T120000Z');
+    expect(result).not.toContain('RECURRENCE-ID');
+  });
+
+  it('leaves a TZID moment-timezone does not know exactly as it arrived', function () {
+    const UNKNOWN = VIENNA_NO_VTIMEZONE.replace(/Europe\/Vienna/g, 'Mars/Olympus_Mons');
+    expect(() => ICSEventHelpers.shiftInlineExceptions(UNKNOWN, QUARTER_HOUR)).not.toThrow();
+    expect(ICAL.TimezoneService.has('Mars/Olympus_Mons')).toBe(false);
   });
 });
 
