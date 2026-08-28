@@ -752,6 +752,33 @@ class CalendarEventPopoverUnenditable extends React.Component<
     });
   }
 
+  /*
+  Offer the organizer a different time, from the card that opens on a meeting we cannot edit.
+
+  The context menu carries this too, but the card is what a double-click produces, and an
+  attendee who lands on a read-only card is exactly the person who wants it - leaving it to a
+  right-click hides the one affordance that replaces editing.
+  */
+  _renderProposeNewTime() {
+    const { event } = this.props;
+    if (!canRespondToEvent(event)) {
+      return null;
+    }
+    return (
+      <div className="section propose-time-action">
+        <div
+          className="btn btn-link"
+          onClick={() => {
+            Actions.closePopover();
+            proposeNewTimeFromPopover(event);
+          }}
+        >
+          {localized('Propose a new time') + '...'}
+        </div>
+      </div>
+    );
+  }
+
   render() {
     const { event, onEdit, editable } = this.props;
     const { title, description, location, attendees } = event;
@@ -784,6 +811,7 @@ class CalendarEventPopoverUnenditable extends React.Component<
             </div>
           )}
           <div className="section">{this.renderTime()}</div>
+          {this._renderProposeNewTime()}
           <ScrollRegion className="section invitees">
             <div className="label">{localized(`Invitees`)}: </div>
             <div className="invitees-list">
@@ -878,6 +906,14 @@ either, but it does create live elements whose loads fire - which is the half th
 function extractNotesFromDescription(description: string) {
   const descriptionRoot = new DOMParser().parseFromString(description || '', 'text/html').body;
 
+  // innerText needs layout to insert line breaks, and a DOMParser document has none - it
+  // degrades to textContent, which runs every paragraph and list item together into one
+  // wall of words. Turn the block boundaries into newlines before reading the text out.
+  descriptionRoot.querySelectorAll('br').forEach((br) => br.replaceWith('\n'));
+  descriptionRoot
+    .querySelectorAll('p, div, li, tr, h1, h2, h3, h4, h5, h6, blockquote')
+    .forEach((block) => block.append('\n'));
+
   const els = descriptionRoot.querySelectorAll('meta[itemprop=description]');
   let notes: string = null;
   if (els.length) {
@@ -885,7 +921,7 @@ function extractNotesFromDescription(description: string) {
       .map((el) => (el as HTMLMetaElement).content)
       .join('\n');
   } else {
-    notes = descriptionRoot.innerText;
+    notes = descriptionRoot.textContent;
   }
   // eslint-disable-next-line no-constant-condition
   while (true) {
