@@ -11,7 +11,9 @@ import {
   SyncbackEventTask,
   localized,
 } from 'mailspring-exports';
-import { EventOccurrence } from './calendar-data-source';
+import React from 'react';
+import { ProposeTimePopover } from 'mailspring-component-kit';
+import { EventOccurrence, occurrenceStartUnix, occurrenceEndUnix } from './calendar-data-source';
 import { parseEventIdFromOccurrence } from './calendar-drag-utils';
 
 /** Whether this occurrence is an invitation we can answer, rather than one we sent. */
@@ -194,3 +196,32 @@ export async function proposeNewTimeForCalendarEvent(
     })
   );
 }
+
+/**
+ * Opens the time picker for a counter-proposal, anchored on the event in the grid.
+ *
+ * Shared by the context menu and the read-only card, so the two offer the same gesture and
+ * cannot drift apart. Anchoring falls back to the centre of the window when the event is
+ * scrolled out of view, which happens when the card was opened and then the grid moved.
+ */
+export function openProposeNewTimePopover(occurrence: EventOccurrence): void {
+  const eventEl = document.getElementById(occurrence.id);
+  Actions.openPopover(
+    React.createElement(ProposeTimePopover, {
+      start: occurrenceStartUnix(occurrence),
+      end: occurrenceEndUnix(occurrence),
+      onPropose: (proposal: { start: Date; end: Date; comment: string }) =>
+        proposeNewTimeForCalendarEvent(occurrence, proposal),
+    }),
+    {
+      originRect: eventEl
+        ? eventEl.getBoundingClientRect()
+        : new DOMRect(window.innerWidth / 2, window.innerHeight / 2, 2, 2),
+      direction: 'right',
+      fallbackDirection: 'left',
+    }
+  );
+}
+
+/** Alias used by the read-only popover, which closes itself before handing over. */
+export const proposeNewTimeFromPopover = openProposeNewTimePopover;

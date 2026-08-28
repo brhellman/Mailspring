@@ -29,6 +29,7 @@ import {
   occurrenceStartUnix,
   occurrenceEndUnix,
 } from './calendar-data-source';
+import { canRespondToEvent, proposeNewTimeFromPopover } from './calendar-rsvp';
 import { EventPropertyRow } from './event-property-row';
 import {
   createCalendarEvent,
