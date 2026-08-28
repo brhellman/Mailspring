@@ -186,6 +186,7 @@ lazyLoadWithGetter(`imapUtf7`, () => require('../utils/imap-utf7').imapUtf7);
 lazyLoad(`CalendarUtils`, 'calendar-utils');
 lazyLoad(`CalendarDateUtils`, 'calendar-date');
 lazyLoad(`ICSEventHelpers`, 'ics-event-helpers');
+lazyLoad(`CalendarConflicts`, 'calendar-conflicts');
 lazyLoad(`FsUtils`, 'fs-utils');
 lazyLoad(`CanvasUtils`, 'canvas-utils');
 lazyLoad(`DragDropTypes`, 'drag-drop-types');

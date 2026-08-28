@@ -169,8 +169,6 @@ module.exports = {
           command: 'application:toggle-dev',
         },
         { type: 'separator' },
-        { label: localized('Calendar Preview'), command: 'application:show-calendar' },
-        { type: 'separator' },
         { label: localized('Create a Plugin') + '...', command: 'window:create-package' },
         { label: localized('Install a Plugin') + '...', command: 'window:install-package' },
         { type: 'separator' },
@@ -201,6 +199,10 @@ module.exports = {
         {
           label: localized('Contacts'),
           command: 'application:show-contacts',
+        },
+        {
+          label: localized('Calendar'),
+          command: 'application:show-calendar',
         },
         { type: 'separator', id: 'window-list-separator' },
         { type: 'separator', id: 'account-shortcuts-separator' },

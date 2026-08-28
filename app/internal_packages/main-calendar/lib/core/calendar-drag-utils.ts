@@ -172,20 +172,27 @@ export function detectHitZone(
   edgeZoneSize: number,
   direction: ViewDirection
 ): HitZone {
+  // An event can be shorter than two edge zones: a half-hour event is about twenty pixels
+  // tall against a twelve pixel zone, which leaves no middle at all and makes every press on
+  // it a resize. Capping each zone at a third of the extent guarantees a middle third that
+  // grabs and moves, however short the event.
+  const extent = direction === 'vertical' ? bounds.height : bounds.width;
+  const edge = Math.min(edgeZoneSize, extent / 3);
+
   if (direction === 'vertical') {
     // Week view: top edge = resize-start, bottom edge = resize-end
-    if (mouseY - bounds.top < edgeZoneSize) {
+    if (mouseY - bounds.top < edge) {
       return { mode: 'resize-start', cursor: 'ns-resize' };
     }
-    if (bounds.bottom - mouseY < edgeZoneSize) {
+    if (bounds.bottom - mouseY < edge) {
       return { mode: 'resize-end', cursor: 'ns-resize' };
     }
   } else {
     // Month view: left edge = resize-start, right edge = resize-end
-    if (mouseX - bounds.left < edgeZoneSize) {
+    if (mouseX - bounds.left < edge) {
       return { mode: 'resize-start', cursor: 'ew-resize' };
     }
-    if (bounds.right - mouseX < edgeZoneSize) {
+    if (bounds.right - mouseX < edge) {
       return { mode: 'resize-end', cursor: 'ew-resize' };
     }
   }
@@ -467,6 +474,14 @@ export function canMoveEvent(event: EventOccurrence, isCalendarReadOnly = false)
     return false;
   }
 
+  // Only the organizer may reschedule a meeting (RFC 5546 section 2.1.4). An attendee who
+  // dragged one would change nothing but their own copy of it - every other guest would
+  // still hold the original time - and a server that implements scheduling is entitled to
+  // reject the write outright. An attendee who wants a different time counters instead.
+  if (!event.isMine) {
+    return false;
+  }
+
   return true;
 }
 
@@ -490,4 +505,73 @@ export function formatDragPreviewTime(start: number, end: number, isAllDay: bool
   const startTime = moment.unix(start).format('h:mm A');
   const endTime = moment.unix(end).format('h:mm A');
   return `${startTime} - ${endTime}`;
+}
+
+/** Where a drag on empty grid space started and where the pointer is now. */
+export interface CreateDragState {
+  /** The instant the pointer went down, in unix seconds. */
+  anchorTime: number;
+  /** Where the pointer is now, in unix seconds. */
+  currentTime: number;
+  isAllDay: boolean;
+  /** False until the pointer has moved far enough to mean a drag rather than a click. */
+  isDragging: boolean;
+  /** Copied from an existing occurrence so the preview is shaped like a real one. */
+  calendarId: string;
+  accountId: string;
+}
+
+/** New events snap to quarter hours, which is what the grid lines imply. */
+export const CREATE_DRAG_SNAP_SECONDS = 15 * 60;
+
+/**
+ * The time range a create-drag currently describes, ordered and snapped.
+ *
+ * Dragging upward is as natural as dragging downward, so the anchor is not assumed to be the
+ * earlier end. The range is held to one snap interval so that a drag which barely moves still
+ * describes an event with a duration rather than an instant.
+ */
+export function createDragRange(state: CreateDragState): { start: number; end: number } {
+  const snap = (t: number) => Math.round(t / CREATE_DRAG_SNAP_SECONDS) * CREATE_DRAG_SNAP_SECONDS;
+  const from = snap(Math.min(state.anchorTime, state.currentTime));
+  const to = snap(Math.max(state.anchorTime, state.currentTime));
+  return { start: from, end: Math.max(to, from + CREATE_DRAG_SNAP_SECONDS) };
+}
+
+/** A synthetic occurrence so the range being drawn renders through the normal pipeline. */
+export function createNewEventPreview(state: CreateDragState): EventOccurrence {
+  const range = createDragRange(state);
+  const start = range.start;
+  // coveredDates takes an exclusive end; createDragRange reports the last day the pointer
+  // covered, which for an all-day drag is that day's own start.
+  const end = state.isAllDay
+    ? CalendarDateUtils.nextDayStartUnix(CalendarDateUtils.calendarDateFromUnix(range.end))
+    : range.end;
+  const shared = {
+    id: '__new_event_drag_preview',
+    accountId: state.accountId,
+    calendarId: state.calendarId,
+    title: '',
+    description: '',
+    location: '',
+    organizer: null,
+    attendees: [],
+    isDragPreview: true,
+    ...coveredDates(start, end, state.isAllDay),
+  } as any;
+
+  return state.isAllDay
+    ? { ...shared, isAllDay: true }
+    : { ...shared, isAllDay: false, start, end };
+}
+
+/** Adds the create-drag preview to a view's events, once the drag has actually begun. */
+export function withCreateDragPreview(
+  events: EventOccurrence[],
+  createDrag: CreateDragState | null
+): EventOccurrence[] {
+  if (!createDrag?.isDragging) {
+    return events;
+  }
+  return [...events, createNewEventPreview(createDrag)];
 }
