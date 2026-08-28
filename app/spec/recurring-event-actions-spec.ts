@@ -110,6 +110,10 @@ const T_NEW_END = Date.UTC(2026, 2, 2, 9, 0, 0) / 1000;
 describe('modifySimpleEvent', function () {
   beforeEach(function () {
     spyOn(ICSEventHelpers, 'updateEventTimes').andCallFake((ics, _opts) => ics);
+    // Orchestration is what these specs are about; bumpEventSequence's own behaviour is
+    // covered in ics-event-helpers-spec. Passing through keeps the ICS comparisons below
+    // about the edit, while still recording that the revision was published.
+    spyOn(ICSEventHelpers, 'bumpEventSequence').andCallFake((ics: string) => ics);
     spyOn(Actions, 'queueTask');
     spyOn(SyncbackEventTask, 'forUpdating').andCallFake((opts) => ({ _opts: opts }));
   });
@@ -211,8 +215,27 @@ describe('createOccurrenceException', function () {
         recurrenceId: '20260302T060000Z',
       })
     );
+    // Orchestration is what these specs are about; bumpEventSequence's own behaviour is
+    // covered in ics-event-helpers-spec. Passing through keeps the ICS comparisons below
+    // about the edit, while still recording that the revision was published.
+    spyOn(ICSEventHelpers, 'bumpEventSequence').andCallFake((ics: string) => ics);
     spyOn(Actions, 'queueTask');
     spyOn(SyncbackEventTask, 'forUpdating').andCallFake((opts) => ({ _opts: opts }));
+  });
+
+  it('advances the exception occurrence, not the whole series', function () {
+    const masterEvent = makeEvent(RECURRING_ICS);
+    createOccurrenceException({
+      event: masterEvent,
+      originalOccurrenceStart: T_OCC2_START,
+      newStart: T_OCC2_START + 7200,
+      newEnd: T_OCC2_START + 10800,
+      isAllDay: false,
+    });
+    expect(ICSEventHelpers.bumpEventSequence).toHaveBeenCalledWith(
+      FAKE_MASTER_ICS_WITH_EXCEPTION,
+      '20260302T060000Z'
+    );
   });
 
   it('calls ICSEventHelpers.createRecurrenceException with the correct arguments', function () {
@@ -372,6 +395,10 @@ END:VCALENDAR`;
   beforeEach(function () {
     spyOn(ICSEventHelpers, 'updateRecurringEventTimes').andCallFake(() => SHIFTED_ICS);
     spyOn(ICSEventHelpers, 'shiftInlineExceptions').andCallFake((ics) => ics);
+    // Orchestration is what these specs are about; bumpEventSequence's own behaviour is
+    // covered in ics-event-helpers-spec. Passing through keeps the ICS comparisons below
+    // about the edit, while still recording that the revision was published.
+    spyOn(ICSEventHelpers, 'bumpEventSequence').andCallFake((ics: string) => ics);
     spyOn(CalendarUtils, 'parseICSString').andCallFake(() =>
       makeFakeParsedEvent(
         Date.UTC(2026, 2, 1, 8, 0, 0), // new DTSTART = 08:00Z
@@ -540,6 +567,10 @@ describe('modifyEventWithRecurringSupport', function () {
       () => FAKE_MASTER_ICS_WITH_EXCEPTION
     );
     spyOn(ICSEventHelpers, 'shiftInlineExceptions').andCallFake((ics) => ics);
+    // Orchestration is what these specs are about; bumpEventSequence's own behaviour is
+    // covered in ics-event-helpers-spec. Passing through keeps the ICS comparisons below
+    // about the edit, while still recording that the revision was published.
+    spyOn(ICSEventHelpers, 'bumpEventSequence').andCallFake((ics: string) => ics);
     spyOn(Actions, 'queueTask');
     spyOn(SyncbackEventTask, 'forUpdating').andCallFake((opts) => ({ _opts: opts }));
 

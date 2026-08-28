@@ -11,12 +11,21 @@ import {
   Actions,
 } from 'mailspring-exports';
 
+/**
+ * Sends an iTIP response to a meeting organizer over email (RFC 5546 / RFC 6047).
+ *
+ * Two methods travel this way. REPLY answers the invitation with a participation status;
+ * COUNTER proposes a different time and carries no status. The sync engine reads an absent
+ * `method` as REPLY.
+ */
 export class EventRSVPTask extends Task {
   ics: string;
   icsRSVPStatus: ICSParticipantStatus;
   subject: string;
   messageId: string;
   organizerEmail: string;
+  method: 'REPLY' | 'COUNTER';
+  comment: string;
 
   static attributes = {
     ...Task.attributes,
@@ -35,6 +44,12 @@ export class EventRSVPTask extends Task {
     }),
     messageId: Attributes.String({
       modelKey: 'messageId',
+    }),
+    method: Attributes.String({
+      modelKey: 'method',
+    }),
+    comment: Attributes.String({
+      modelKey: 'comment',
     }),
   };
 
@@ -96,15 +111,51 @@ export class EventRSVPTask extends Task {
       messageId,
       ics: icsReplyData,
       icsRSVPStatus,
+      method: 'REPLY',
+    });
+  }
+
+  /**
+   * Proposes a different time for a meeting we were invited to.
+   *
+   * @param ics - A COUNTER built by ICSEventHelpers.createCounterProposal.
+   */
+  static forProposingNewTime({
+    accountId,
+    to,
+    messageId,
+    ics,
+    summary,
+    comment,
+  }: {
+    accountId: string;
+    to: string;
+    messageId?: string;
+    ics: string;
+    summary: string;
+    comment?: string;
+  }) {
+    return new EventRSVPTask({
+      to,
+      subject: localized('New time proposed: %@', summary),
+      accountId,
+      messageId,
+      ics,
+      method: 'COUNTER',
+      comment,
     });
   }
 
   label() {
-    return localized('Sending RSVP');
+    return this.method === 'COUNTER'
+      ? localized('Proposing a new time')
+      : localized('Sending RSVP');
   }
 
   async onSuccess() {
-    if (this.messageId && this.icsRSVPStatus) {
+    // A counter-proposal isn't an answer, so it must not make the Accept/Maybe/Decline
+    // buttons look answered.
+    if (this.messageId && this.icsRSVPStatus && this.method !== 'COUNTER') {
       const msg = await DatabaseStore.find<Message>(Message, this.messageId);
       if (msg) {
         Actions.queueTask(

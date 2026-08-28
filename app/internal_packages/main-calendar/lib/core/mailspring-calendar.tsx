@@ -20,6 +20,7 @@ import {
   ResizableRegion,
   KeyCommandsRegion,
   MiniMonthView,
+  ProposeTimePopover,
 } from 'mailspring-component-kit';
 import { CalendarMenuCommands } from '../calendar-menu-commands';
 import { DayView } from './day-view';
@@ -32,10 +33,14 @@ import {
   EventOccurrence,
   FocusedEventInfo,
   coveredDates,
+  isEventSelected,
   focusedEventInfoForEvents,
   occurrenceStartUnix,
   occurrenceEndUnix,
 } from './calendar-data-source';
+import { CalendarEventContextMenu } from './calendar-event-context-menu';
+import { openProposeNewTimePopover } from './calendar-rsvp';
+
 import { CalendarView, DEFAULT_TIMED_EVENT_DURATION_SECONDS } from './calendar-constants';
 import { CalendarEmptyState } from './calendar-empty-state';
 import {
@@ -59,6 +64,9 @@ import {
 } from './calendar-drag-types';
 import {
   createDragState,
+  createDragRange,
+  CreateDragState,
+  CREATE_DRAG_SNAP_SECONDS,
   updateDragState,
   parseEventIdFromOccurrence,
   snapAllDayTimes,
@@ -83,7 +91,18 @@ export interface EventRendererProps {
   selectedEvents: EventOccurrence[];
   onEventClick: (e: React.MouseEvent<any>, event: EventOccurrence) => void;
   onEventDoubleClick: (event: EventOccurrence) => void;
+  onEventContextMenu: (event: EventOccurrence) => void;
   onEventFocused: (event: EventOccurrence) => void;
+  /**
+   * Changes whenever calendar colours or the theme change.
+   *
+   * Colours live in a module-level cache rather than in props, so components that guard
+   * themselves with shouldComponentUpdate cannot see a recolour and would keep painting the
+   * old colours. A version passed as an ordinary prop lets them invalidate normally, where
+   * keying the view on it would remount the calendar and lose scroll, selection and
+   * subscriptions.
+   */
+  paintVersion: string;
 }
 
 export interface MailspringCalendarViewProps extends EventRendererProps {
@@ -97,6 +116,8 @@ export interface MailspringCalendarViewProps extends EventRendererProps {
   onCalendarMouseMove: (args: CalendarEventArgs) => void;
   onCalendarClick: (args: CalendarEventArgs) => void;
   onCalendarDoubleClick: (args: CalendarEventArgs) => void;
+  onCalendarContextMenu: (args: CalendarEventArgs) => void;
+  createDrag: CreateDragState | null;
 
   // Drag-related props
   dragState: DragState | null;
@@ -130,6 +151,9 @@ interface MailspringCalendarState {
   dragState: DragState | null;
   calendarListVisible: boolean;
   readOnlyCalendarIds: Set<string>;
+  /** The range currently being drawn on empty grid space, if any. */
+  createDrag: CreateDragState | null;
+  colorVersion: number;
   themeVersion: number;
 }
 
@@ -150,6 +174,18 @@ export class MailspringCalendar extends React.Component<
   _themeDisposable?: { dispose(): void };
   _unlisten?: () => void;
   _dataSource = new CalendarDataSource();
+  /** Set when a drag ends, so the click that follows it is ignored. */
+  _suppressNextCalendarClick = false;
+  /*
+  A press on an event that has not yet moved far enough to be a drag.
+
+  An instance field, not state: a re-render on mousedown moves the pressed element out from
+  under the pointer, so the second press of a double-click misses and dblclick never fires.
+  _onCalendarMouseMove promotes it into state once updateDragState says a drag has begun.
+  */
+  _pendingDragState: DragState | null = null;
+  /** A press on empty grid space that has not yet travelled far enough to draw a range. */
+  _pendingCreateDrag: CreateDragState | null = null;
 
   constructor(props: MailspringCalendarProps) {
     super(props);
@@ -164,6 +200,8 @@ export class MailspringCalendar extends React.Component<
       dragState: null,
       calendarListVisible: AppEnv.config.get(CALENDAR_LIST_VISIBLE) !== false,
       readOnlyCalendarIds: new Set<string>(),
+      createDrag: null,
+      colorVersion: getColorCacheVersion(),
       themeVersion: 0,
     };
   }
@@ -210,6 +248,7 @@ export class MailspringCalendar extends React.Component<
         this.setState({
           calendars: calendars,
           calendarsLoaded: true,
+          colorVersion: getColorCacheVersion(),
           accounts: accountStore.accounts(),
           disabledCalendars: disabledCalendars || [],
           readOnlyCalendarIds,
@@ -264,7 +303,12 @@ export class MailspringCalendar extends React.Component<
     }
   };
 
-  _openEventPopover(eventModel: EventOccurrence) {
+  /**
+   * @param startEditing Open the editor directly. Double-clicking an event means "let me
+   *   change this", so landing on a read-only card with a small pencil in the corner is a
+   *   dead end - the same double-click on empty space creates an event and opens its editor.
+   */
+  _openEventPopover(eventModel: EventOccurrence, startEditing = false) {
     const eventEl = document.getElementById(eventModel.id);
     if (!eventEl) {
       return;
@@ -280,6 +324,7 @@ export class MailspringCalendar extends React.Component<
     Actions.openPopover(
       <CalendarEventPopover
         event={eventModel}
+        startEditing={startEditing}
         isCalendarReadOnly={this._isCalendarReadOnly(eventModel.calendarId)}
       />,
       {
@@ -319,7 +364,19 @@ export class MailspringCalendar extends React.Component<
    * Handle single click on the calendar background (not on an event).
    * Deselects all events and closes any open popover.
    */
+  /*
+  A click that merely ends a drag is not a click on the background.
+
+  The browser fires click straight after mouseup, so the gesture that finishes drawing a new
+  event arrives here a frame later and would close the editor that mouseup just opened - and
+  the gesture that finishes moving an event would deselect the event it just moved. Neither
+  is what the user did, so a drag consumes the click that terminates it.
+  */
   _onCalendarClick = (_args: CalendarEventArgs) => {
+    if (this._suppressNextCalendarClick) {
+      this._suppressNextCalendarClick = false;
+      return;
+    }
     if (this.state.selectedEvents.length > 0) {
       this.setState({ selectedEvents: [], focusedEvent: null });
     }
@@ -327,7 +384,42 @@ export class MailspringCalendar extends React.Component<
   };
 
   _onEventDoubleClick = (occurrence: EventOccurrence) => {
-    this._openEventPopover(occurrence);
+    this._openEventPopover(occurrence, true);
+  };
+
+  _onEventContextMenu = (occurrence: EventOccurrence) => {
+    // Right-clicking an event that isn't selected selects it first, so the menu acts on what
+    // is highlighted - and so pressing Delete afterwards means the same thing.
+    if (!isEventSelected(this.state.selectedEvents, occurrence)) {
+      this.setState({ selectedEvents: [occurrence], focusedEvent: null });
+    }
+
+    const readOnly = this._isCalendarReadOnly(occurrence.calendarId);
+    new CalendarEventContextMenu({
+      occurrence,
+      readOnly,
+      editable: !readOnly && occurrence.isMine,
+      onOpen: () => this._openEventPopover(occurrence, true),
+      onDelete: () => this._deleteEvent(occurrence),
+      onProposeNewTime: () => openProposeNewTimePopover(occurrence),
+    }).displayMenu();
+  };
+
+  /**
+   * Right-clicking empty space offers to create an event there; the double-click that also
+   * creates one is not discoverable.
+   */
+  _onCalendarContextMenu = (args: CalendarEventArgs) => {
+    if (args.time === null) return;
+
+    const editable = getEditableCalendars(this.state.calendars, this.state.disabledCalendars);
+    if (editable.length === 0) return;
+
+    require('@electron/remote')
+      .Menu.buildFromTemplate([
+        { label: localized('New Event'), click: () => this._onCalendarDoubleClick(args) },
+      ])
+      .popup({});
   };
 
   /**
@@ -370,6 +462,38 @@ export class MailspringCalendar extends React.Component<
       ? CalendarDateUtils.nextDayStartUnix(CalendarDateUtils.calendarDateFromUnix(startUnix))
       : startUnix + DEFAULT_TIMED_EVENT_DURATION_SECONDS;
 
+    this._openNewEventPopover({
+      startUnix,
+      endUnix,
+      isAllDay,
+      clientX: args.mouseEvent.clientX,
+      clientY: args.mouseEvent.clientY,
+    });
+  };
+
+  /** Opens the editor for an event that doesn't exist yet, covering the given range. */
+  _openNewEventPopover({
+    startUnix,
+    endUnix,
+    isAllDay,
+    clientX,
+    clientY,
+  }: {
+    startUnix: number;
+    endUnix: number;
+    isAllDay: boolean;
+    clientX: number;
+    clientY: number;
+  }) {
+    const editableCalendars = getEditableCalendars(
+      this.state.calendars,
+      this.state.disabledCalendars
+    );
+    if (editableCalendars.length === 0) {
+      showNoEditableCalendarsError();
+      return;
+    }
+
     // Build a temporary EventOccurrence to open the popover in "new event" mode. Build the
     // right variant — an all-day new event carries dates only, like every other occurrence.
     const base = {
@@ -381,6 +505,8 @@ export class MailspringCalendar extends React.Component<
       isRecurring: false,
       isCancelled: false,
       isPending: false,
+      isAwaitingGuests: false,
+      isMine: true,
       isException: false,
       organizer: null,
       attendees: [],
@@ -392,7 +518,7 @@ export class MailspringCalendar extends React.Component<
       : { ...base, isAllDay: false, start: startUnix, end: endUnix };
 
     // Open the popover anchored near the mouse position
-    const originRect = new DOMRect(args.mouseEvent.clientX - 1, args.mouseEvent.clientY - 1, 2, 2);
+    const originRect = new DOMRect(clientX - 1, clientY - 1, 2, 2);
 
     Actions.openPopover(
       <CalendarEventPopover
@@ -409,7 +535,7 @@ export class MailspringCalendar extends React.Component<
         closeOnAppBlur: false,
       }
     );
-  };
+  }
 
   // Fires once the focused event has scrolled itself into view. Clearing the flag here keeps
   // a later unrelated re-render from re-running that scroll (and reopening the popover).
@@ -530,11 +656,14 @@ export class MailspringCalendar extends React.Component<
       recurrenceEnd: masterEvent.recurrenceEnd,
     };
 
-    // Add EXDATE to exclude this occurrence
-    masterEvent.ics = ICSEventHelpers.addExclusionDate(
-      masterEvent.ics,
-      occurrenceStartUnix(occurrence),
-      occurrence.isAllDay
+    // Add EXDATE to exclude this occurrence. Cancelling an occurrence is a change the
+    // guests need to see, so the series advances a revision.
+    masterEvent.ics = ICSEventHelpers.bumpEventSequence(
+      ICSEventHelpers.addExclusionDate(
+        masterEvent.ics,
+        occurrenceStartUnix(occurrence),
+        occurrence.isAllDay
+      )
     );
 
     // Queue syncback with undo support
@@ -609,7 +738,23 @@ export class MailspringCalendar extends React.Component<
    * Handle mouse move during drag
    */
   _onCalendarMouseMove = (args: CalendarEventArgs) => {
-    if (!this.state.dragState) {
+    const createDrag = this.state.createDrag || this._pendingCreateDrag;
+    if (createDrag) {
+      if (args.time === null) return;
+      const moved =
+        Math.abs(args.time - createDrag.anchorTime) >= CREATE_DRAG_SNAP_SECONDS ||
+        createDrag.isDragging;
+      // Only once it has actually moved does the range become something to draw.
+      if (!moved) return;
+      this._pendingCreateDrag = null;
+      this.setState({
+        createDrag: { ...createDrag, currentTime: args.time, isDragging: moved },
+      });
+      return;
+    }
+
+    const active = this.state.dragState || this._pendingDragState;
+    if (!active) {
       return;
     }
 
@@ -621,7 +766,7 @@ export class MailspringCalendar extends React.Component<
     const config = this._getDragConfig();
 
     const newDragState = updateDragState(
-      this.state.dragState,
+      active,
       args.time,
       args.x,
       args.y,
@@ -629,8 +774,10 @@ export class MailspringCalendar extends React.Component<
       config
     );
 
-    // Only update state if something changed
-    if (newDragState !== this.state.dragState) {
+    // Below the threshold updateDragState hands back the same object, so a press that
+    // hasn't travelled stays out of state and the DOM is left alone.
+    if (newDragState !== active) {
+      this._pendingDragState = null;
       this.setState({ dragState: newDragState });
     }
   };
@@ -639,7 +786,34 @@ export class MailspringCalendar extends React.Component<
    * Handle mouse up to complete drag
    */
   _onCalendarMouseUp = (args: CalendarEventArgs) => {
+    const { createDrag } = this.state;
+    if (this._pendingCreateDrag && !createDrag) {
+      // Never travelled: an ordinary press, and the click that follows it is not ours to eat.
+      this._pendingCreateDrag = null;
+      return;
+    }
+    if (createDrag) {
+      this.setState({ createDrag: null });
+      if (createDrag.isDragging) {
+        this._suppressNextCalendarClick = true;
+        const { start, end } = createDragRange(createDrag);
+        this._openNewEventPopover({
+          startUnix: start,
+          endUnix: createDrag.isAllDay
+            ? CalendarDateUtils.nextDayStartUnix(CalendarDateUtils.calendarDateFromUnix(end))
+            : end,
+          isAllDay: createDrag.isAllDay,
+          clientX: args.mouseEvent.clientX,
+          clientY: args.mouseEvent.clientY,
+        });
+      }
+      return;
+    }
+
     if (!this.state.dragState) {
+      // A press that never crossed the threshold is a click, and must not suppress the one
+      // that follows - that click is half of a double-click.
+      this._pendingDragState = null;
       return;
     }
 
@@ -651,6 +825,7 @@ export class MailspringCalendar extends React.Component<
       this.setState({ dragState: null });
       return;
     }
+    this._suppressNextCalendarClick = true;
 
     // Check if the times OR the kind actually changed. A timed event dropped on the all-day
     // row can convert with identical instants (e.g. a midnight-to-midnight event), so a
@@ -669,21 +844,59 @@ export class MailspringCalendar extends React.Component<
     this._persistDragChange(dragState);
   };
 
+  /**
+   * A press that began on an event arrives here first as a pending grab, and takes its grid
+   * time and container coordinates from this hit-test - the same frame every later drag
+   * target uses, so a DST day cannot skew the anchor. Anything else is a press on empty
+   * grid, which begins drawing a new event. Nothing is drawn until the pointer has moved
+   * past the drag threshold, which keeps a plain click behaving as a click: deselecting,
+   * not creating.
+   */
   _onCalendarMouseDown = (args: CalendarEventArgs) => {
     const pending = this._pendingDrag;
     this._pendingDrag = null;
-    if (!pending || args.time === null) {
+    if (pending) {
+      if (args.time === null) {
+        return;
+      }
+      // Held rather than committed: a setState here re-renders the grid between the two
+      // presses of a double-click. _onCalendarMouseMove promotes it once the pointer moves.
+      this._pendingDragState = createDragState(
+        pending.event,
+        pending.hitZone,
+        args.time,
+        args.x,
+        args.y,
+        this._getDragConfig()
+      );
       return;
     }
-    const dragState = createDragState(
-      pending.event,
-      pending.hitZone,
-      args.time,
-      args.x,
-      args.y,
-      this._getDragConfig()
-    );
-    this.setState({ dragState });
+
+    if (args.time === null || args.mouseEvent.button !== 0) {
+      return;
+    }
+    // A press on an event that cannot be dragged sets no pending grab, but still bubbles
+    // here - ask the DOM where it landed rather than draw a new event over an existing one.
+    const target = args.mouseEvent.target as HTMLElement;
+    if (target && typeof target.closest === 'function' && target.closest('.calendar-event')) {
+      return;
+    }
+    const editable = getEditableCalendars(this.state.calendars, this.state.disabledCalendars);
+    if (editable.length === 0) {
+      return;
+    }
+
+    // Held outside state until the pointer travels, for the same reason as
+    // _pendingDragState: a setState here re-renders the grid on every press, and a press
+    // that re-renders is a press the browser cannot pair into a double-click.
+    this._pendingCreateDrag = {
+      anchorTime: args.time,
+      currentTime: args.time,
+      isAllDay: args.containerType === 'all-day-area' || args.containerType === 'month-cell',
+      isDragging: false,
+      calendarId: editable[0].id,
+      accountId: editable[0].accountId,
+    };
   };
 
   /**
@@ -959,7 +1172,7 @@ export class MailspringCalendar extends React.Component<
     const CurrentView = VIEWS[this.state.view];
     return (
       <CurrentView
-        key={`view-colors-${getColorCacheVersion()}-theme-${this.state.themeVersion}`}
+        paintVersion={`${this.state.colorVersion}-${this.state.themeVersion}`}
         dataSource={this._dataSource}
         focusedMoment={this.state.focusedMoment}
         focusedEvent={this.state.focusedEvent}
@@ -972,8 +1185,11 @@ export class MailspringCalendar extends React.Component<
         onCalendarMouseMove={this._onCalendarMouseMove}
         onCalendarClick={this._onCalendarClick}
         onCalendarDoubleClick={this._onCalendarDoubleClick}
+        onCalendarContextMenu={this._onCalendarContextMenu}
+        createDrag={this.state.createDrag}
         onEventClick={this._onEventClick}
         onEventDoubleClick={this._onEventDoubleClick}
+        onEventContextMenu={this._onEventContextMenu}
         onEventFocused={this._onEventFocused}
         dragState={this.state.dragState}
         onEventDragStart={this._onEventDragStart}
