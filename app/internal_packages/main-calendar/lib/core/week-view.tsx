@@ -22,7 +22,8 @@ import {
   tickGenerator,
 } from './week-view-helpers';
 import { MailspringCalendarViewProps } from './mailspring-calendar';
-import { getEventsWithDragPreview } from './calendar-drag-utils';
+import { getEventsWithDragPreview, withCreateDragPreview } from './calendar-drag-utils';
+import { sameCalendarIds } from './calendar-helpers';
 
 const BUFFER_DAYS = 7; // in each direction
 const DAYS_IN_VIEW = 7;
@@ -75,7 +76,7 @@ export class WeekView extends React.Component<
     }
     if (
       prevProps.focusedMoment !== this.props.focusedMoment ||
-      prevProps.disabledCalendars !== this.props.disabledCalendars
+      !sameCalendarIds(prevProps.disabledCalendars, this.props.disabledCalendars)
     ) {
       this.updateSubscription();
     }
@@ -226,7 +227,10 @@ export class WeekView extends React.Component<
 
   render() {
     const days = this._daysInView();
-    const events = getEventsWithDragPreview(this.state.events, this.props.dragState);
+    const events = withCreateDragPreview(
+      getEventsWithDragPreview(this.state.events, this.props.dragState),
+      this.props.createDrag
+    );
     const eventsByDay = eventsGroupedByDay(events, days);
     const dayEnds = exclusiveDayEnds(days);
     const todayColumnIdx = days.findIndex((d) => this._isToday(d));
@@ -252,6 +256,7 @@ export class WeekView extends React.Component<
           onCalendarMouseMove={this.props.onCalendarMouseMove}
           onCalendarClick={this.props.onCalendarClick}
           onCalendarDoubleClick={this.props.onCalendarDoubleClick}
+          onCalendarContextMenu={this.props.onCalendarContextMenu}
         >
           <div className="top-banner">
             <InjectedComponentSet matching={{ role: 'Calendar:Week:Banner' }} direction="row" />
@@ -300,6 +305,8 @@ export class WeekView extends React.Component<
                   selectedEvents={this.props.selectedEvents}
                   onEventClick={this.props.onEventClick}
                   onEventDoubleClick={this.props.onEventDoubleClick}
+                  onEventContextMenu={this.props.onEventContextMenu}
+                  paintVersion={this.props.paintVersion}
                   onEventFocused={this.props.onEventFocused}
                   dragState={this.props.dragState}
                   onEventDragStart={this.props.onEventDragStart}
@@ -327,6 +334,8 @@ export class WeekView extends React.Component<
                       selectedEvents={this.props.selectedEvents}
                       onEventClick={this.props.onEventClick}
                       onEventDoubleClick={this.props.onEventDoubleClick}
+                      onEventContextMenu={this.props.onEventContextMenu}
+                      paintVersion={this.props.paintVersion}
                       onEventFocused={this.props.onEventFocused}
                       dragState={this.props.dragState}
                       onEventDragStart={this.props.onEventDragStart}

@@ -172,15 +172,20 @@ body.platform-win32 {
         flex: 1;
       }
     }
+    // Selection is drawn as a ring, not a fill. An event's fill is its calendar's colour, so
+    // repainting it with the system accent makes a selected event look as though it moved to
+    // a different calendar - unmistakably so when the accent happens to match one the user
+    // already has. The inner ring in the page background separates the two.
     &.selected {
-      background-color: @accent-primary !important;
-      .default-header,
-      .event-details {
-        color: @text-color-inverse;
-      }
-      &:before {
-        background: color-mix(in srgb, @accent-primary, black 15%);
-      }
+      box-shadow: 0 0 0 2px @background-primary, 0 0 0 4px @accent-primary;
+      z-index: 3;
+    }
+
+    // An invitation we sent that guests haven't all answered: dashed outline, keeping the
+    // calendar's own colour. Distinct from .pending, which marks an invitation *we* owe a
+    // reply to and greys the event out.
+    &.awaiting-guests {
+      border: 1px dashed var(--event-band-color, currentColor);
     }
 
     // Tentative/pending events: gray background with theme-colored left band
@@ -682,17 +687,14 @@ body.platform-win32 {
         box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.1);
       }
 
+      // Ring rather than fill - see the note on the week/day view's .selected above.
       &.selected {
-        background-color: @accent-primary !important;
+        box-shadow: 0 0 0 1px @background-primary, 0 0 0 3px @accent-primary;
+        z-index: 3;
+      }
 
-        .month-view-event-title {
-          color: @text-color-inverse;
-          opacity: 1;
-        }
-
-        &:before {
-          background: color-mix(in srgb, @accent-primary, black 15%);
-        }
+      &.awaiting-guests {
+        border: 1px dashed var(--event-band-color, currentColor);
       }
 
       // Tentative/pending events: hatched diagonal stripes pattern

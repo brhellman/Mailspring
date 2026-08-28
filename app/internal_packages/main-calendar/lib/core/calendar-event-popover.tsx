@@ -1,6 +1,7 @@
 import moment, { Moment } from 'moment';
 import React from 'react';
 import {
+  AccountStore,
   Actions,
   Calendar,
   Account,
@@ -87,6 +88,8 @@ interface CalendarEventPopoverProps {
   event: EventOccurrence;
   /** When true, the popover opens in edit mode to create a new event */
   isNewEvent?: boolean;
+  /** Open straight into the editor rather than the read-only card. */
+  startEditing?: boolean;
   /** Available calendars (required when isNewEvent is true) */
   calendars?: Calendar[];
   /** Available accounts (required when isNewEvent is true) */
@@ -104,6 +107,8 @@ interface CalendarEventPopoverState {
   location: string;
   attendees: EventAttendee[];
   editing: boolean;
+  /** True once repeat/timezone were read from the event, not left at their defaults. */
+  recurrenceLoaded: boolean;
   title: string;
   // New fields for enhanced editing
   allDay: boolean;
@@ -141,7 +146,8 @@ export class CalendarEventPopover extends React.Component<
       end,
       location,
       title,
-      editing: !!this.props.isNewEvent,
+      editing: !!this.props.isNewEvent || !!this.props.startEditing,
+      recurrenceLoaded: !!this.props.isNewEvent,
       attendees,
       // Initialize new fields with defaults
       allDay: isAllDay || false,
@@ -186,10 +192,18 @@ export class CalendarEventPopover extends React.Component<
     }
   }
 
-  onEdit = async () => {
-    // Load actual recurrence and timezone from the event's ICS data
+  /*
+  Reads the recurrence and timezone the editor's controls need out of the event's ICS.
+
+  The Repeat control defaults to 'none', and saving writes whatever it shows back over the
+  event - updateRecurrenceRule(ics, null) drops RRULE, EXDATE and RDATE together. So the form
+  must not be shown until this has run, and a save must not act on the recurrence field until
+  recurrenceLoaded says the value came from the event rather than from the default.
+  */
+  async _loadEditDefaults(): Promise<void> {
     let repeat: RepeatOption = 'none';
     let timezone = this.state.timezone;
+    let recurrenceLoaded = false;
     try {
       const eventId = parseEventIdFromOccurrence(this.props.event.id);
       const event = await DatabaseStore.find<Event>(Event, eventId);
@@ -200,12 +214,24 @@ export class CalendarEventPopover extends React.Component<
         if (eventTz) {
           timezone = eventTz;
         }
+        recurrenceLoaded = true;
       }
     } catch (e) {
-      // Fall back to defaults if we can't read the event
+      // Leave recurrenceLoaded false so the save path keeps its hands off the RRULE.
     }
-    this.setState({ editing: true, repeat, timezone, originalRepeat: repeat });
+    this.setState({ repeat, timezone, recurrenceLoaded, originalRepeat: repeat });
+  }
+
+  onEdit = async () => {
+    await this._loadEditDefaults();
+    this.setState({ editing: true });
   };
+
+  componentDidMount() {
+    if (this.state.editing && !this.props.isNewEvent) {
+      this._loadEditDefaults();
+    }
+  }
 
   getStartMoment = () => moment(this.state.start * 1000);
   getEndMoment = () => moment(this.state.end * 1000);
@@ -223,8 +249,18 @@ export class CalendarEventPopover extends React.Component<
     );
     ics = ICSEventHelpers.updateEventProperty(ics, 'location', this.state.location || '');
     ics = ICSEventHelpers.updateEventProperty(ics, 'description', this.state.description || '');
-    ics = ICSEventHelpers.updateAttendees(ics, this.state.attendees || []);
+    ics = ICSEventHelpers.updateAttendees(ics, this.state.attendees || [], this._organizer());
     return ics;
+  }
+
+  /**
+   * The account this event lives on, offered to updateAttendees so that adding the first
+   * guest to an event we created without one gives the event an ORGANIZER - the property a
+   * CalDAV server needs before it will send the invitations.
+   */
+  _organizer(): { email: string; name?: string } | undefined {
+    const account = AccountStore.accountForId(this.props.event.accountId);
+    return account ? { email: account.emailAddress, name: account.name } : undefined;
   }
 
   saveEdits = async (): Promise<void> => {
@@ -331,11 +367,14 @@ export class CalendarEventPopover extends React.Component<
 
     // The Repeat control can't express INTERVAL, BYDAY, COUNT, UNTIL or RDATE, so writing it back
     // unchanged would flatten the rule and bump SEQUENCE for every guest.
-    if (this.state.repeat !== this.state.originalRepeat) {
+    if (this.state.recurrenceLoaded && this.state.repeat !== this.state.originalRepeat) {
       ics = ICSEventHelpers.updateRecurrenceRule(ics, repeatOptionToRRule(this.state.repeat));
     }
 
-    event.ics = ics;
+    // One save is one revision, however many helpers it took to assemble - see
+    // bumpEventSequence. Only the organizer publishes revisions; an attendee never reaches
+    // here, because the editor isn't offered on an event that isn't ours.
+    event.ics = ICSEventHelpers.bumpEventSequence(ics);
     // Re-derive the cached columns from the written ICS, not from state: for a recurring "all
     // events" edit the master DTSTART/DTEND are shifted+resized and differ from the edited
     // occurrence's times (matches modifyAllOccurrences). For a non-recurring edit this equals
@@ -390,8 +429,9 @@ export class CalendarEventPopover extends React.Component<
       attendees: this.state.attendees || [],
     });
 
-    // Update master event (now contains the inline exception VEVENT)
-    masterEvent.ics = updatedMasterIcs;
+    // The revision applies to this occurrence, so the exception's SEQUENCE advances and
+    // the master's does not: the other occurrences haven't changed.
+    masterEvent.ics = ICSEventHelpers.bumpEventSequence(updatedMasterIcs, recurrenceId);
     masterEvent.recurrenceStart = this.state.start;
     masterEvent.recurrenceEnd = this.state.end;
 
@@ -633,16 +673,36 @@ export class CalendarEventPopover extends React.Component<
     );
   };
 
+  /*
+  Whether this event may be changed here.
+
+  A read-only calendar is the obvious half. The other is that only the organizer may revise
+  a meeting (RFC 5546 section 2.1.4): an attendee who edited one would change nothing but
+  their own copy - every other guest would still hold the original - and a server
+  implementing scheduling is entitled to reject the write. This is the same test
+  canMoveEvent applies to dragging, so the two paths agree on what is editable; an attendee
+  who wants a different time counter-proposes from the invitation instead.
+  */
+  _isEditable(): boolean {
+    return !this.props.isCalendarReadOnly && (this.props.isNewEvent || this.props.event.isMine);
+  }
+
   render() {
-    if (!this.props.isCalendarReadOnly && (this.state.editing || this.props.isNewEvent)) {
+    if (this._isEditable() && (this.state.editing || this.props.isNewEvent)) {
       return this.renderEditable();
     }
-    return <CalendarEventPopoverUnenditable {...this.props} onEdit={this.onEdit} />;
+    return (
+      <CalendarEventPopoverUnenditable
+        {...this.props}
+        editable={this._isEditable()}
+        onEdit={this.onEdit}
+      />
+    );
   }
 }
 
 class CalendarEventPopoverUnenditable extends React.Component<
-  CalendarEventPopoverProps & { onEdit: () => void }
+  CalendarEventPopoverProps & { editable: boolean; onEdit: () => void }
 > {
   descriptionRef = React.createRef<HTMLDivElement>();
 
@@ -692,7 +752,7 @@ class CalendarEventPopoverUnenditable extends React.Component<
   }
 
   render() {
-    const { event, onEdit, isCalendarReadOnly } = this.props;
+    const { event, onEdit, editable } = this.props;
     const { title, description, location, attendees } = event;
 
     const notes = extractNotesFromDescription(description);
@@ -701,7 +761,7 @@ class CalendarEventPopoverUnenditable extends React.Component<
       <div className="calendar-event-popover" tabIndex={0}>
         <div className="title-wrapper">
           <div className="title">{title}</div>
-          {!isCalendarReadOnly && (
+          {editable && (
             <RetinaImg
               className="edit-icon"
               name="edit-icon.png"
@@ -805,11 +865,17 @@ function sortAttendeesByStatus(attendees: EventAttendee[]): EventAttendee[] {
   });
 }
 
+/*
+An event DESCRIPTION is markup written by whoever created the event, which for an invitation
+is anyone who can send mail. Only its text is wanted here, but Google and Outlook both put
+the real text in <meta itemprop="description">, so it has to be parsed rather than stripped.
+
+DOMParser builds an inert document: no script runs and no subresource is fetched, so an
+`<img src=x onerror=...>` never executes. Assigning to innerHTML would not run inline script
+either, but it does create live elements whose loads fire - which is the half that bites.
+*/
 function extractNotesFromDescription(description: string) {
-  const fragment = document.createDocumentFragment();
-  const descriptionRoot = document.createElement('root');
-  fragment.appendChild(descriptionRoot);
-  descriptionRoot.innerHTML = description;
+  const descriptionRoot = new DOMParser().parseFromString(description || '', 'text/html').body;
 
   const els = descriptionRoot.querySelectorAll('meta[itemprop=description]');
   let notes: string = null;

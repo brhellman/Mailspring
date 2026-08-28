@@ -135,6 +135,18 @@ interface OccurrenceBase {
    * - Events where the current user is an attendee but hasn't accepted (NEEDS-ACTION or TENTATIVE)
    */
   isPending: boolean;
+  /**
+   * True on an event we organise whose guests have not all replied yet.
+   *
+   * Distinct from isPending, which is about *our* answer to someone else's invitation. This
+   * is the other side of the same conversation: an invitation we sent and are waiting on.
+   */
+  isAwaitingGuests: boolean;
+  /**
+   * True when this account is the event's ORGANIZER, or when the event has no organizer at
+   * all and is therefore nobody's meeting but ours. Governs who may reschedule it.
+   */
+  isMine: boolean;
   isException: boolean;
   /**
    * For exception occurrences only: the Unix timestamp (seconds) of the **original**
@@ -246,6 +258,21 @@ function occurrenceFromICS(args: {
   const myPartstat = myAttendee?.partstat?.toUpperCase();
   const isAwaitingMyResponse = myAttendee && myPartstat !== 'ACCEPTED' && myPartstat !== 'DECLINED';
 
+  // An invitation *we sent* is unsettled until every guest has answered. This is only ever
+  // about meetings we organise: whether a third party has replied to someone else's meeting
+  // is not our business to display, and marking those unsettled makes most of the calendar
+  // look provisional. Our own attendee line doesn't count either - we accept our own meeting
+  // when we create it - and rooms never answer at all.
+  const organizerEmail = item.organizer
+    ? normalizeEmail(CalendarUtils.emailFromParticipantURI(String(item.organizer)) || '')
+    : '';
+  const iAmOrganizer = !!organizerEmail && new Contact({ email: organizerEmail }).isMe();
+  const guests = attendees.filter((a) => a.email && a.email !== myAttendee?.email);
+  const isAwaitingGuests =
+    iAmOrganizer &&
+    guests.length > 0 &&
+    guests.some((a) => (a.partstat || 'NEEDS-ACTION').toUpperCase() === 'NEEDS-ACTION');
+
   const isAllDay = !!startTime.isDate;
   const startDate = isAllDay
     ? dateFromICALTime(startTime)
@@ -268,10 +295,12 @@ function occurrenceFromICS(args: {
     endDate,
     isCancelled: status === 'CANCELLED',
     isPending: status === 'TENTATIVE' || !!isAwaitingMyResponse,
+    isAwaitingGuests,
+    isMine: !organizerEmail || iAmOrganizer,
     isException: args.isException ?? !!rid,
     recurrenceIdStart: rid ? (rid as any).toJSDate().getTime() / 1000 : undefined,
     isRecurring: args.isRecurring,
-    organizer: item.organizer ? { email: item.organizer } : null,
+    organizer: organizerEmail ? { email: organizerEmail } : null,
     attendees,
   };
 
@@ -374,6 +403,8 @@ export function occurrencesForEvents(
             endDate,
             isCancelled: false,
             isPending: false,
+            isAwaitingGuests: false,
+            isMine: true,
             isException: false,
             isRecurring: false,
             organizer: null,
