@@ -2056,8 +2056,3 @@ describe('ICSEventHelpers with Windows timezone identifiers', function () {
     expect(ics).not.toContain('TZID=Middle Earth Time');
   });
 });
-
-// ---------------------------------------------------------------------------
-// Expansion budget. ical-expander iterates forward from DTSTART with no way to seek, so a
-// fixed cap is a limit on how far back a series may begin. At 100 a weekly meeting older
-// than about two years expanded to nothing and disappeared from the calendar.
