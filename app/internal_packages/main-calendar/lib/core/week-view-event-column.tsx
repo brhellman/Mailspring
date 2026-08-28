@@ -14,6 +14,8 @@ import { DragState, HitZone } from './calendar-drag-types';
  * column-by-column basis.
  */
 interface WeekViewEventColumnProps {
+  /** See MailspringCalendarViewProps.paintVersion - this is what defeats the guard below. */
+  paintVersion: string;
   events: EventOccurrence[];
   day: Moment;
   /** Exclusive — the next column's start, so a DST day is not assumed to be 86400s */
@@ -21,6 +23,7 @@ interface WeekViewEventColumnProps {
   focusedEvent: FocusedEventInfo | null;
   onEventClick: (e: React.MouseEvent<any>, event: EventOccurrence) => void;
   onEventDoubleClick: (event: EventOccurrence) => void;
+  onEventContextMenu: (event: EventOccurrence) => void;
   onEventFocused: (event: EventOccurrence) => void;
   selectedEvents: EventOccurrence[];
   dragState: DragState | null;
@@ -49,6 +52,7 @@ export class WeekViewEventColumn extends React.Component<WeekViewEventColumnProp
       day,
       onEventClick,
       onEventDoubleClick,
+      onEventContextMenu,
       onEventFocused,
       dragState,
       onEventDragStart,
@@ -82,6 +86,7 @@ export class WeekViewEventColumn extends React.Component<WeekViewEventColumnProp
             concurrentEvents={overlap[e.id]?.concurrentEvents || 1}
             onClick={onEventClick}
             onDoubleClick={onEventDoubleClick}
+            onContextMenu={onEventContextMenu}
             onFocused={onEventFocused}
             isDragging={dragState?.event.id === e.id}
             onDragStart={onEventDragStart}
