@@ -28,6 +28,7 @@ export const LocationVideoInput: React.FC<LocationVideoInputProps> = ({
       <input
         type="text"
         className="location-input"
+        spellCheck={false}
         aria-label={localized('Location or Video Call')}
         placeholder={localized('Add Location or Video Call')}
         value={value}

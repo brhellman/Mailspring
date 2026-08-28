@@ -3,15 +3,17 @@
 @import 'ui-mixins';
 
 .fixed-popover .calendar-event-popover {
-  color: fadeout(@text-color, 20%);
+  color: @text-color;
   background-color: @background-primary;
   display: flex;
   flex-direction: column;
   font-size: @font-size-small;
   max-height: 95vh;
-  width: 300px;
-  // The 95vh cap only holds if the box clips; .popover-body below is what scrolls.
+  width: 320px;
+  // Keeps the sections inside the card's rounded corners, and the 95vh cap only holds if the box
+  // clips; .popover-body below is what scrolls.
   overflow: hidden;
+  border-radius: @border-radius-base;
 
   .popover-form {
     display: flex;
@@ -25,251 +27,335 @@
     overflow-y: auto;
   }
 
-  .location {
-    color: @text-color-very-subtle;
-    padding: @padding-base-vertical @padding-base-horizontal;
-    word-wrap: break-word;
-    flex-shrink: 0;
-  }
-  .title-wrapper {
-    color: @text-color-inverse;
-    display: flex;
-    font-size: @font-size-larger;
-    background-color: @accent-primary;
-    border-top-left-radius: @border-radius-base;
-    border-top-right-radius: @border-radius-base;
-    padding: @padding-base-vertical @padding-base-horizontal;
-    align-items: center;
-    flex-shrink: 0;
-    .title {
-      padding-right: @padding-base-vertical;
-    }
-  }
-  .edit-icon {
-    background-color: @text-color-inverse;
-    cursor: pointer;
+  /*
+  The card itself carries tabIndex so the keyboard can reach it, and it is focused as soon as
+  it opens - which made the global :focus-visible rule draw a 2px accent outline around the
+  whole popover every single time one was opened, reading as an error state. A floating card
+  with its own shadow is already distinct from the page; the controls inside keep their rings.
+  */
+  &:focus,
+  &:focus-visible {
+    outline: none;
   }
 
-  .invitees.section {
+  // TabGroupRegion renders a plain div around the whole editor, so the column
+  // layout has to pass through it for the body to scroll and the footer to stay put.
+  .popover-form {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  /*
+  The card's one scrolling region.
+
+  min-height:0 is the load-bearing half: a flex child defaults to min-height:auto, which
+  refuses to shrink below its content, so the box overflowed its own max-height and pushed
+  the Save row off the bottom of the screen instead of scrolling.
+  */
+  .popover-body {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  // ============================================
+  // Header
+  // ============================================
+  /*
+  Deliberately not filled with @accent-primary.
+
+  That variable resolves to the user's system accent (var(--system-accent)), so a filled bar
+  is whatever colour the desktop happens to be set to - and the white title on top of it is
+  a contrast gamble no theme can correct. A neutral header keeps the title legible whatever
+  the accent is.
+  */
+  .title-wrapper {
+    display: flex;
+    align-items: flex-start;
+    gap: @padding-base-vertical;
+    flex-shrink: 0;
+    padding: 10px @padding-base-horizontal;
+    // @background-off-primary is identical to @background-primary in both the light and the
+    // dark theme, so it gives a header no contrast at all; @background-secondary is the
+    // variable that actually recedes in each.
+    background-color: @background-secondary;
+    border-bottom: 1px solid @border-color-divider;
+
+    .title {
+      flex: 1;
+      min-width: 0;
+      color: @text-color;
+      font-size: @font-size-larger;
+      font-weight: @font-weight-medium;
+      line-height: 1.3;
+      // A title is one arbitrary string from the organizer; let it wrap rather
+      // than widen the card or spill out of it.
+      overflow-wrap: anywhere;
+    }
+  }
+
+  .edit-icon {
+    background-color: @text-color-very-subtle;
+    cursor: pointer;
+    flex-shrink: 0;
+    margin-top: 3px;
+
+    &:hover {
+      background-color: @text-color;
+    }
+  }
+
+  // ============================================
+  // Read-only card
+  // ============================================
+  .location {
+    color: @text-color-subtle;
+    padding: 10px @padding-base-horizontal;
+    border-bottom: 1px solid @border-color-divider;
+    overflow-wrap: anywhere;
+  }
+
+  .section {
+    border-bottom: 1px solid @border-color-divider;
+    padding: 10px @padding-base-horizontal;
+
+    &:last-child {
+      border-bottom: none;
+    }
+  }
+
+  .label {
+    align-items: center;
+    color: @text-color-very-subtle;
+    display: flex;
+    font-size: @font-size-smaller;
+    font-weight: @font-weight-medium;
+    gap: 6px;
+    letter-spacing: 0.06em;
+    margin-bottom: 6px;
+    text-transform: uppercase;
+
+    .count {
+      background-color: @background-secondary;
+      border-radius: 8px;
+      font-weight: @font-weight-normal;
+      letter-spacing: 0;
+      padding: 0 6px;
+    }
+  }
+
+  .section.when {
+    .when-date {
+      color: @text-color;
+      font-weight: @font-weight-medium;
+    }
+
+    .when-time {
+      color: @text-color-subtle;
+    }
+  }
+
+  // The one action a read-only card offers. Drawn as a link rather than a .btn box so it
+  // matches the invitee toggle below it instead of floating in a section of its own.
+  .section.propose-time-action .btn-link {
+    background: none;
+    border: none;
+    box-shadow: none;
+    color: @accent-primary;
+    height: auto;
     padding: 0;
 
-    > .label {
-      padding-top: @padding-base-vertical;
-      padding-left: @padding-base-horizontal;
-      padding-right: @padding-base-horizontal;
+    &:hover {
+      background: none;
+      text-decoration: underline;
     }
   }
 
-  .invitees .scroll-region-content {
-    max-height: 160px;
-    word-wrap: break-word;
-    position: relative;
-    padding-left: @padding-base-horizontal;
-    padding-right: @padding-base-horizontal;
-    padding-bottom: 4px;
+  .invitees-toggle {
+    background: none;
+    border: none;
+    color: @accent-primary;
+    cursor: pointer;
+    font-size: @font-size-smaller;
+    margin-top: 6px;
+    padding: 0;
+
+    &:hover {
+      text-decoration: underline;
+    }
   }
 
   .invitees-list {
     display: flex;
     flex-wrap: wrap;
     gap: 4px;
-    margin-top: 4px;
   }
 
   .attendee-chip {
-    display: inline-flex;
     align-items: center;
     background-color: @background-secondary;
-    border-radius: 12px;
-    padding: 2px 8px 2px 4px;
-    font-size: @font-size-small;
     border: 1px solid @border-color-divider;
+    border-radius: 11px;
+    display: inline-flex;
+    font-size: @font-size-smaller;
+    max-width: 100%;
+    padding: 1px 8px 1px 3px;
 
     .attendee-status {
-      width: 16px;
-      height: 16px;
-      border-radius: 50%;
-      display: flex;
       align-items: center;
+      border-radius: 50%;
+      color: white;
+      display: flex;
+      flex-shrink: 0;
+      height: 15px;
       justify-content: center;
-      font-size: 10px;
-      font-weight: bold;
-      margin-right: 4px;
+      margin-right: 5px;
+      width: 15px;
     }
 
     .attendee-name {
-      max-width: 180px;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
     }
 
+    // Status colours are semantic rather than themed: the same green/red/grey has to
+    // read as accepted/declined/unanswered in every theme.
     &.accepted .attendee-status {
       background-color: #34c759;
-      color: white;
     }
 
     &.declined .attendee-status {
       background-color: #ff3b30;
-      color: white;
     }
 
     &.tentative .attendee-status,
     &.needs-action .attendee-status {
       background-color: #8e8e93;
-      color: white;
     }
   }
-  .description {
+
+  .section.description .notes-body {
+    color: @text-color-subtle;
+    line-height: 1.45;
     white-space: pre-line;
-    word-wrap: break-word;
-  }
-  .description .scroll-region-content {
-    max-height: 250px;
-    position: relative;
-  }
-  .label {
-    color: @text-color-very-subtle;
-  }
-  .section {
-    border-top: 1px solid @border-color-divider;
-    padding: @padding-base-vertical @padding-base-horizontal;
-  }
-  .event-popover-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
-    padding: @padding-base-vertical @padding-base-horizontal;
-    border-top: 1px solid @border-color-divider;
-    flex-shrink: 0;
+    // Organizers paste raw meeting URLs; an unbreakable token would otherwise
+    // force the card wider than its own max-width.
+    overflow-wrap: anywhere;
+
+    a {
+      overflow-wrap: anywhere;
+    }
   }
 
   // ============================================
-  // Event Property Row - Two-column grid layout
+  // Editor rows
   // ============================================
   .event-property-row {
-    display: flex;
     align-items: center;
+    border-bottom: 1px solid @border-color-divider;
+    display: flex;
     min-height: 32px;
     padding: @padding-small-vertical @padding-base-horizontal;
-    border-bottom: 1px solid @border-color-divider;
-
-    &:hover {
-      background-color: fade(@background-secondary, 50%);
-    }
 
     &:last-child {
       border-bottom: none;
     }
 
     .row-label {
-      width: 80px;
-      text-align: right;
-      padding-right: @padding-base-horizontal;
       color: @text-color-very-subtle;
-      font-size: @font-size-small;
       flex-shrink: 0;
+      font-size: @font-size-small;
+      padding-right: @padding-base-horizontal;
+      text-align: right;
+      width: 78px;
     }
 
     .row-value {
-      flex: 1;
-      font-size: @font-size-small;
+      align-items: center;
       color: @text-color;
       display: flex;
-      align-items: center;
-      gap: @padding-base-vertical;
+      flex: 1;
+      font-size: @font-size-small;
+      gap: 6px;
+      min-width: 0;
 
       select {
         background: transparent;
         border: none;
-        color: @text-color;
-        font-size: @font-size-small;
-        cursor: pointer;
-        padding: 2px 4px;
         border-radius: @border-radius-small;
+        color: @text-color;
+        cursor: pointer;
+        font-size: @font-size-small;
+        max-width: 100%;
+        padding: 2px 4px;
 
         &:hover {
           background-color: @background-secondary;
         }
 
         &:focus {
-          outline: none;
           box-shadow: 0 0 0 2px rgb(from @accent-primary r g b / 40%);
+          outline: none;
         }
       }
 
-      // Fix time picker dropdown z-index
-      .time-picker-wrap {
-        .time-options {
-          z-index: 200;
-        }
+      .time-picker-wrap .time-options {
+        z-index: 200;
       }
     }
   }
 
-  // ============================================
-  // Calendar Color Picker
-  // ============================================
-  .calendar-color-picker {
-    position: relative;
-    margin-left: auto;
+  /*
+  The date and the time read as two halves of one control.
 
-    .color-picker-trigger {
-      display: flex;
-      align-items: center;
-      gap: 4px;
-      cursor: pointer;
-      padding: 4px;
-      border-radius: @border-radius-small;
-
-      &:hover {
-        background-color: fade(@text-color-inverse, 20%);
-      }
-    }
-
-    .color-dot {
-      width: 14px;
-      height: 14px;
-      border-radius: @border-radius-small;
-      border: 1px solid fade(@black, 20%);
-    }
-
-    .color-picker-chevron {
-      font-size: 10px;
-      color: @text-color-inverse;
-      opacity: 0.8;
-    }
-
-    .color-picker-dropdown {
-      position: absolute;
-      top: 100%;
-      right: 0;
-      margin-top: 4px;
-      background: @background-primary;
+  DatePicker draws its value as a div coloured @text-color-link, TimePicker as a bare text
+  input, so a single row looked like a hyperlink sitting next to a form field. Giving both
+  the same box matches what the propose-time popover already does with the same two
+  components; neither component's own behaviour is touched.
+  */
+  .event-property-row .row-value {
+    .date-picker .day-text,
+    .time-picker-wrap input {
+      background: transparent;
+      border: 1px solid transparent;
       border-radius: @border-radius-base;
-      box-shadow: @standard-shadow, @shadow-border;
-      padding: 8px;
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 6px;
-      z-index: 100;
+      color: @text-color;
+      font-size: @font-size-small;
+      padding: 2px 6px;
     }
 
-    .color-option {
-      width: 20px;
-      height: 20px;
-      border-radius: 50%;
+    .date-picker .day-text {
       cursor: pointer;
-      border: 2px solid transparent;
-      transition: transform 0.1s ease;
+      display: inline-block;
 
-      &:hover {
-        transform: scale(1.15);
+      &:hover,
+      &.focused {
+        background-color: @background-secondary;
+        border-color: @border-color-divider;
+        color: @text-color;
       }
+    }
 
-      &.selected {
-        border-color: @text-color;
-        box-shadow: inset 0 0 0 2px @background-primary;
+    .time-picker-wrap {
+      width: 5.6em;
+
+      input {
+        width: 100%;
+
+        &:hover {
+          background-color: @background-secondary;
+          border-color: @border-color-divider;
+        }
+
+        &:focus {
+          background-color: @background-primary;
+          border-color: @accent-primary;
+          outline: none;
+        }
       }
     }
   }
@@ -278,38 +364,38 @@
   // Calendar Selector (for new events)
   // ============================================
   .calendar-selector {
-    display: flex;
     align-items: center;
-    padding: @padding-small-vertical @padding-base-horizontal;
     border-bottom: 1px solid @border-color-divider;
+    display: flex;
+    padding: @padding-small-vertical @padding-base-horizontal;
 
     .calendar-selector-dot {
-      width: 10px;
-      height: 10px;
-      border-radius: 50%;
-      margin-right: 8px;
-      flex-shrink: 0;
       border: 1px solid fade(@black, 15%);
+      border-radius: 50%;
+      flex-shrink: 0;
+      height: 10px;
+      margin-right: 8px;
+      width: 10px;
     }
 
     select {
-      flex: 1;
       background: transparent;
       border: none;
-      color: @text-color;
-      font-size: @font-size-small;
-      cursor: pointer;
-      padding: 2px 4px;
       border-radius: @border-radius-small;
+      color: @text-color;
+      cursor: pointer;
+      flex: 1;
+      font-size: @font-size-small;
       min-width: 0;
+      padding: 2px 4px;
 
       &:hover {
         background-color: @background-secondary;
       }
 
       &:focus {
-        outline: none;
         box-shadow: 0 0 0 2px rgb(from @accent-primary r g b / 40%);
+        outline: none;
       }
     }
   }
@@ -318,17 +404,18 @@
   // Location Video Input
   // ============================================
   .location-video-input {
-    display: flex;
     align-items: center;
-    padding: @padding-small-vertical @padding-base-horizontal;
     border-bottom: 1px solid @border-color-divider;
+    display: flex;
+    padding: @padding-small-vertical @padding-base-horizontal;
 
     .location-input {
-      flex: 1;
-      border: none;
       background: transparent;
+      border: none;
       color: @text-color;
+      flex: 1;
       font-size: @font-size-small;
+      min-width: 0;
       padding: 4px 0;
 
       &:focus:not(:focus-visible) {
@@ -341,14 +428,15 @@
     }
 
     .video-toggle {
-      width: 28px;
-      height: 28px;
-      display: flex;
       align-items: center;
-      justify-content: center;
       border-radius: @border-radius-small;
-      cursor: pointer;
       color: @text-color-very-subtle;
+      cursor: pointer;
+      display: flex;
+      flex-shrink: 0;
+      height: 28px;
+      justify-content: center;
+      width: 28px;
 
       &:hover {
         background-color: @background-secondary;
@@ -361,36 +449,27 @@
       }
 
       img {
-        width: 16px;
         height: 16px;
+        width: 16px;
       }
     }
   }
 
   // ============================================
-  // Edit Mode Title - cleaner styling
+  // Edit Mode Title
   // ============================================
   &.editing {
-    .title-wrapper {
-      background-color: transparent;
-      border-bottom: 1px solid @border-color-divider;
+    .title-wrapper .title {
+      background: transparent;
+      border: none;
+      padding: 0;
 
-      .title {
-        flex: 1;
-        border: none;
-        background: transparent;
-        color: @text-color;
-        font-size: @font-size-larger;
-        font-weight: @font-weight-medium;
-        padding: 4px 0;
+      &:focus:not(:focus-visible) {
+        outline: none;
+      }
 
-        &:focus:not(:focus-visible) {
-          outline: none;
-        }
-
-        &::placeholder {
-          color: @text-color-very-subtle;
-        }
+      &::placeholder {
+        color: @text-color-very-subtle;
       }
     }
   }
@@ -399,15 +478,14 @@
   // Action Links (Add Invitees, Add Notes)
   // ============================================
   .action-link {
-    display: block;
-    padding: @padding-small-vertical @padding-base-horizontal;
-    color: @text-color-very-subtle;
-    font-size: @font-size-small;
-    cursor: pointer;
     border-bottom: 1px solid @border-color-divider;
+    color: @accent-primary;
+    cursor: pointer;
+    display: block;
+    font-size: @font-size-small;
+    padding: @padding-small-vertical @padding-base-horizontal;
 
     &:hover {
-      color: @text-color;
       background-color: fade(@background-secondary, 50%);
     }
 
@@ -420,73 +498,115 @@
   // Expanded sections (when action links clicked)
   // ============================================
   .expanded-section {
-    padding: @padding-small-vertical @padding-base-horizontal;
     border-bottom: 1px solid @border-color-divider;
+    padding: @padding-small-vertical @padding-base-horizontal 10px;
 
-    // Fix double border: remove bottom border when followed by actions
     &:last-of-type {
       border-bottom: none;
     }
 
     .section-header {
-      display: flex;
       align-items: center;
+      display: flex;
       justify-content: space-between;
-      margin-bottom: @padding-small-vertical;
+      margin-bottom: 6px;
 
       .section-title {
         color: @text-color-very-subtle;
-        font-size: @font-size-small;
+        font-size: @font-size-smaller;
+        font-weight: @font-weight-medium;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
       }
 
       .section-close {
-        cursor: pointer;
-        color: @text-color-very-subtle;
-        font-size: 16px;
-        line-height: 1;
-        padding: 2px 6px;
+        align-items: center;
+        background: none;
+        border: none;
         border-radius: @border-radius-small;
+        color: @text-color-very-subtle;
+        cursor: pointer;
+        display: flex;
+        height: 20px;
+        justify-content: center;
+        padding: 0;
+        width: 20px;
 
         &:hover {
-          color: @text-color;
           background-color: @background-secondary;
+          color: @text-color;
         }
       }
     }
 
     textarea,
     input[type='text']:not(.tokenizing-field-input *) {
-      width: 100%;
+      background: @input-bg;
       border: 1px solid @border-color-divider;
       border-radius: @border-radius-small;
-      background: @background-primary;
       color: @text-color;
       font-size: @font-size-small;
       padding: @padding-small-vertical @padding-small-horizontal;
       resize: vertical;
+      width: 100%;
 
       &:focus {
-        outline: none;
         border-color: @accent-primary;
         box-shadow: 0 0 0 2px rgb(from @accent-primary r g b / 20%);
+        outline: none;
       }
     }
 
     textarea {
-      min-height: 60px;
+      display: block;
+      line-height: 1.45;
+      min-height: 62px;
+
+      // A bare textarea keeps the platform scrollbar, arrow buttons and all, which is the
+      // one control in the popover that does not look like the rest of the app.
+      &::-webkit-scrollbar {
+        width: 8px;
+      }
+
+      &::-webkit-scrollbar-button {
+        display: none;
+        height: 0;
+        width: 0;
+      }
+
+      &::-webkit-scrollbar-track {
+        background: transparent;
+      }
+
+      &::-webkit-scrollbar-thumb {
+        background: rgba(150, 150, 150, 0.33);
+        border-radius: 2px;
+      }
     }
 
     .tokenizing-field .tokenizing-field-input {
-        position: relative;
-        margin-left: 0;
-        padding-top: 0;
-        padding-bottom: 0;
+      margin-left: 0;
+      padding-bottom: 0;
+      padding-top: 0;
+      position: relative;
     }
   }
 
-  // Action links should not have border when last before actions
   .action-link:last-of-type {
     border-bottom: none;
+  }
+
+  // ============================================
+  // Footer
+  // ============================================
+  .event-popover-actions {
+    background-color: @background-secondary;
+    border-top: 1px solid @border-color-divider;
+    display: flex;
+    flex-shrink: 0;
+    gap: 8px;
+    justify-content: flex-end;
+    padding: 8px @padding-base-horizontal;
   }
 }
 
