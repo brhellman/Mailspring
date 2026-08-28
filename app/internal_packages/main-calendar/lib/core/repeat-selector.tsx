@@ -19,7 +19,7 @@ const REPEAT_OPTIONS: { value: RepeatOption; label: string }[] = [
 
 export const RepeatSelector: React.FC<RepeatSelectorProps> = ({ value, onChange }) => {
   return (
-    <EventPropertyRow label={localized('repeat:')}>
+    <EventPropertyRow label={localized('Repeat')}>
       <select
         className="repeat-select"
         value={value}

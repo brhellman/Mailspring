@@ -10,7 +10,7 @@ interface AllDayToggleProps {
 
 export const AllDayToggle: React.FC<AllDayToggleProps> = ({ checked, onChange }) => {
   return (
-    <EventPropertyRow label={localized('all-day:')}>
+    <EventPropertyRow label={localized('All-day')}>
       <Switch checked={checked} onChange={() => onChange(!checked)} label={localized('All day')} />
     </EventPropertyRow>
   );
