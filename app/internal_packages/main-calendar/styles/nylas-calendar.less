@@ -169,6 +169,10 @@ body.platform-win32 {
         flex: 1;
       }
     }
+    // Dragging an event would otherwise select the text inside it. Handled here rather than
+    // with preventDefault on mousedown, which suppressed double-click - see CalendarEvent.
+    user-select: none;
+
     // Selection is drawn as a ring, not a fill. An event's fill is its calendar's colour, so
     // repainting it with the system accent makes a selected event look as though it moved to
     // a different calendar - unmistakably so when the accent happens to match one the user
