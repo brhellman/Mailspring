@@ -26,6 +26,7 @@ interface CalendarEventContainerProps {
   onCalendarMouseMove: (args: CalendarEventArgs) => void;
   onCalendarMouseUp: (args: CalendarEventArgs) => void;
   onCalendarDoubleClick?: (args: CalendarEventArgs) => void;
+  onCalendarContextMenu?: (args: CalendarEventArgs) => void;
   onCalendarClick?: (args: CalendarEventArgs) => void;
 }
 
@@ -77,6 +78,11 @@ export class CalendarEventContainer extends React.Component<CalendarEventContain
     // Only fire for background double-clicks (not on events).
     // CalendarEvent components stop propagation of their own double-clicks.
     this._runPropsHandler('onCalendarDoubleClick', event.nativeEvent);
+  };
+
+  _onCalendarContextMenu = (event: React.MouseEvent) => {
+    event.preventDefault();
+    this._runPropsHandler('onCalendarContextMenu', event.nativeEvent);
   };
 
   _runPropsHandler(name: keyof CalendarEventContainerProps, event: MouseEvent) {
@@ -245,6 +251,7 @@ export class CalendarEventContainer extends React.Component<CalendarEventContain
         onMouseMove={this._onCalendarMouseMove}
         onClick={this._onCalendarClick}
         onDoubleClick={this._onCalendarDoubleClick}
+        onContextMenu={this._onCalendarContextMenu}
       >
         {this.props.children}
       </div>

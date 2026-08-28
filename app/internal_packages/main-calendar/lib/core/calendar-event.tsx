@@ -42,6 +42,7 @@ interface CalendarEventProps {
 
   onClick: (e: React.MouseEvent<any>, event: EventOccurrence) => void;
   onDoubleClick: (event: EventOccurrence) => void;
+  onContextMenu?: (event: EventOccurrence) => void;
   onFocused: (event: EventOccurrence) => void;
 
   /** Called when a drag operation starts on this event */
@@ -65,6 +66,7 @@ export class CalendarEvent extends React.Component<CalendarEventProps, CalendarE
     isCalendarReadOnly: false,
     onClick: () => {},
     onDoubleClick: () => {},
+    onContextMenu: () => {},
     onFocused: () => {},
   };
 
@@ -355,7 +357,8 @@ export class CalendarEvent extends React.Component<CalendarEventProps, CalendarE
   }
 
   render() {
-    const { direction, event, onClick, onDoubleClick, selected, isDragging } = this.props;
+    const { direction, event, onClick, onDoubleClick, onContextMenu, selected, isDragging } =
+      this.props;
 
     const classNames = [
       'calendar-event',
@@ -363,6 +366,8 @@ export class CalendarEvent extends React.Component<CalendarEventProps, CalendarE
       selected && 'selected',
       event.isCancelled && 'cancelled',
       event.isPending && 'pending',
+      event.isAwaitingGuests && 'awaiting-guests',
+      event.isException && 'exception',
       isDragging && 'dragging',
       this._canDrag() && 'draggable',
       event.isDragPreview && 'drag-preview',
@@ -400,6 +405,11 @@ export class CalendarEvent extends React.Component<CalendarEventProps, CalendarE
         onDoubleClick={(e) => {
           e.stopPropagation();
           onDoubleClick(event);
+        }}
+        onContextMenu={(e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          onContextMenu(event);
         }}
         onMouseMove={this._onMouseMove}
         onMouseLeave={this._onMouseLeave}

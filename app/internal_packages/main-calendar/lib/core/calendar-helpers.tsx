@@ -1,6 +1,7 @@
 import moment from 'moment';
 import {
   Utils,
+  AccountStore,
   Calendar,
   Actions,
   DateUtils,
@@ -438,11 +439,40 @@ export interface CreateCalendarEventOptions {
 }
 
 /**
+ * Works out the ORGANIZER and ATTENDEE list for a new event.
+ *
+ * An event with guests is a scheduled event, and RFC 5545 section 3.8.4.3 requires it to
+ * name an ORGANIZER. CalDAV servers key off that property to decide the event is theirs to
+ * schedule (RFC 6638 section 3.2.1) - without it Google stores the event happily and never
+ * emails anyone. The organizer is also listed as an attendee, already accepted, because
+ * that is where servers and other clients look to find out who is coming.
+ *
+ * An event with no guests is left alone: naming an organizer on a private appointment only
+ * invites servers to start scheduling something nobody was invited to.
+ */
+function organizerAndAttendeesFor(options: CreateCalendarEventOptions) {
+  const guests = options.attendees || [];
+  const account = AccountStore.accountForId(options.accountId);
+  if (!guests.length || !account) {
+    return { organizer: undefined, attendees: guests };
+  }
+
+  return {
+    organizer: { email: account.emailAddress, name: account.name },
+    attendees: [
+      { email: account.emailAddress, name: account.name, role: 'CHAIR', partstat: 'ACCEPTED' },
+      ...guests.filter((a) => !Utils.emailIsEquivalent(a.email, account.emailAddress)),
+    ],
+  };
+}
+
+/**
  * Create a new calendar event, queue the syncback task, and focus the event.
  * Shared by CalendarEventPopover and QuickEventPopover.
  */
 export async function createCalendarEvent(options: CreateCalendarEventOptions): Promise<void> {
   const icsuid = ICSEventHelpers.generateUID();
+  const { organizer, attendees } = organizerAndAttendeesFor(options);
   const ics = ICSEventHelpers.createICSString({
     uid: icsuid,
     summary: options.summary,
@@ -452,7 +482,8 @@ export async function createCalendarEvent(options: CreateCalendarEventOptions): 
     timezone: options.timezone || DateUtils.timeZone,
     description: options.description,
     location: options.location,
-    attendees: options.attendees,
+    organizer,
+    attendees,
     recurrenceRule: options.recurrenceRule,
   });
 
@@ -474,8 +505,13 @@ export async function createCalendarEvent(options: CreateCalendarEventOptions): 
   Actions.queueTask(task);
 
   try {
-    await TaskQueue.waitForPerformRemote(task);
-    Actions.focusCalendarEvent({ id: event.id, start: event.recurrenceStart });
+    // The sync engine assigns the event's final ID when it runs the task locally, so read
+    // it back off the completed task instead of the local copy we handed it.
+    const completed = await TaskQueue.waitForPerformRemote(task);
+    Actions.focusCalendarEvent({
+      id: completed?.event?.id || event.id,
+      start: event.recurrenceStart,
+    });
   } catch (error) {
     console.error('Failed to sync new event to server:', error);
   }
@@ -488,4 +524,19 @@ export async function createCalendarEvent(options: CreateCalendarEventOptions): 
 export function centerGridScroll(viewportEl: HTMLElement, selectedEvent?: EventOccurrence): void {
   const fraction = selectedEvent && isTimed(selectedEvent) ? dayFraction(selectedEvent.start) : 0.5;
   viewportEl.scrollTop = viewportEl.scrollHeight * fraction - viewportEl.clientHeight / 2;
+}
+
+/**
+ * Whether two lists of calendar ids are the same set of ids.
+ *
+ * The list reaches the views as `AppEnv.config.get(...) || []`, which mints a fresh array
+ * whenever the config key is unset - as it is until the user first hides a calendar. The
+ * views compare it to decide whether to rebuild their event subscription, and an identity
+ * comparison would rebuild on every update, dropping any change that arrived while the
+ * subscription was being replaced.
+ */
+export function sameCalendarIds(a: string[] = [], b: string[] = []): boolean {
+  if (a === b) return true;
+  if (a.length !== b.length) return false;
+  return a.every((id, i) => id === b[i]);
 }
