@@ -16,7 +16,8 @@ describe('events package', function () {
     expect(require('../lib/event-header').EventHeader).toBeDefined();
   });
 
-  it('loads the propose-time popover', function () {
-    expect(require('../lib/propose-time-popover').ProposeTimePopover).toBeDefined();
+  it('loads the propose-time popover from the component kit', function () {
+    // Shared with the calendar package, so it lives in src/components rather than here.
+    expect(require('mailspring-component-kit').ProposeTimePopover).toBeDefined();
   });
 });
