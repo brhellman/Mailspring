@@ -39,6 +39,8 @@ interface CalendarEventContextMenuOptions {
   editable: boolean;
   onOpen: () => void;
   onDelete: () => void;
+  /** Offer a different time to the organizer. See proposeNewTimeForCalendarEvent. */
+  onProposeNewTime: () => void;
 }
 
 /**
@@ -68,7 +70,7 @@ export class CalendarEventContextMenu {
       ['DECLINED', localized('Decline')],
     ];
 
-    return actions.map(([status, label]) => ({
+    const items: TemplateItem[] = actions.map(([status, label]) => ({
       label,
       type: 'checkbox' as const,
       checked: current === status,
@@ -79,6 +81,16 @@ export class CalendarEventContextMenu {
         respondToCalendarEvent(occurrence, status);
       },
     }));
+
+    // Since an attendee may not revise the meeting, this is the affordance that replaces
+    // editing it. Unlike the responses it only sends mail, so a read-only calendar is no
+    // obstacle - there is nothing local to write.
+    items.push({
+      label: localized('Propose New Time') + '...',
+      click: this.opts.onProposeNewTime,
+    });
+
+    return items;
   }
 
   template(): TemplateItem[] {

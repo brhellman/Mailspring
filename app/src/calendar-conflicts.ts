@@ -1,6 +1,7 @@
 import IcalExpander from 'ical-expander';
 import { Event } from './flux/models/event';
 import { emailFromParticipantURI } from './calendar-utils';
+import { expansionIterationBudget } from './ics-event-helpers';
 
 /** One busy occurrence that overlaps the window being checked. */
 export interface CalendarConflict {
@@ -67,47 +68,6 @@ function isFreeTime(component: ICALComponent, addresses: string[]): boolean {
 }
 
 /**
- * How many occurrences IcalExpander may step through before giving up on one series.
- *
- * It iterates forward from DTSTART with no way to seek, so a cap is a limit on how far back
- * a series may begin rather than on the work the window costs. The library's default of 1000
- * is too low to be safe - a daily meeting that started more than about three years ago never
- * reaches the window and its conflicts go silently unreported - but removing the cap is worse:
- * an invitation is untrusted input, and `RRULE:FREQ=SECONDLY` dated 1970 would spin the
- * renderer forever.
- *
- * So the budget is derived from the series itself: how many steps of its own frequency fit
- * between where it starts and the end of the window, plus slack. Realistic calendars land far
- * below the ceiling - a daily series running since 2000 needs about 9,000 - while a frequency
- * fine enough to be abusive exceeds it and is truncated instead of expanded.
- */
-const STEP_SECONDS: { [freq: string]: number } = {
-  SECONDLY: 1,
-  MINUTELY: 60,
-  HOURLY: 3600,
-  DAILY: 86400,
-  WEEKLY: 604800,
-  // Deliberately the shortest month and year. Underestimating the step overestimates the
-  // budget, which errs towards expanding a legitimate series rather than truncating it.
-  MONTHLY: 28 * 86400,
-  YEARLY: 365 * 86400,
-};
-const MIN_ITERATIONS = 1000;
-const MAX_ITERATIONS = 50000;
-
-function iterationBudget(event: Event, windowEnd: number): number {
-  const rrule = /^RRULE:(.*)$/im.exec(event.ics);
-  if (!rrule) {
-    return MIN_ITERATIONS; // not a series; one occurrence is all there is to reach
-  }
-  const freq = /FREQ=([A-Z]+)/i.exec(rrule[1]);
-  const interval = parseInt((/INTERVAL=(\d+)/i.exec(rrule[1]) || [])[1], 10) || 1;
-  const step = (STEP_SECONDS[(freq ? freq[1] : '').toUpperCase()] || STEP_SECONDS.DAILY) * interval;
-  const steps = Math.ceil(Math.max(0, windowEnd - event.recurrenceStart) / step) + 100;
-  return Math.min(MAX_ITERATIONS, Math.max(MIN_ITERATIONS, steps));
-}
-
-/**
  * Finds the occurrences on the user's calendars that overlap a window - what Google Calendar
  * shows as "Conflicts with…" on an invitation.
  *
@@ -147,7 +107,7 @@ export function findConflicts({
     try {
       expanded = new IcalExpander({
         ics: event.ics,
-        maxIterations: iterationBudget(event, end),
+        maxIterations: expansionIterationBudget(event.ics, event.recurrenceStart, end),
       }).between(new Date(start * 1000), new Date(end * 1000));
     } catch (err) {
       // An unparseable calendar shouldn't fail the whole check; the cost is one conflict
