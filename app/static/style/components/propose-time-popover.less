@@ -1,0 +1,154 @@
+@import 'ui-variables';
+
+/*
+The picker an attendee uses to counter-propose a meeting time.
+
+Lives with the shared component styles rather than in a package: the popover opens from the
+message header in the main window and from the calendar's own window, and a package
+stylesheet only loads for its own windowTypes - so in the calendar it rendered with no styles
+at all.
+*/
+.propose-time-popover {
+  // Sized to the window rather than fixed. A tiling window manager, a split screen or a
+  // laptop in portrait all give this far less room than a maximised window, and a popover
+  // that assumes the room is there simply renders off the bottom of the screen.
+  width: 320px;
+  max-width: ~"calc(100vw - 32px)";
+  /*
+  Never a scroll container.
+
+  The time picker's option list is absolutely positioned and hangs below its field. Any
+  overflow value other than visible turns this box into its clipping ancestor, which cut the
+  list off mid-way and put a scrollbar down the side of the popover. The content here is
+  short and bounded - two rows, a note and two buttons - so it does not need to scroll, and
+  FixedPopover already flips the whole popover when there is no room below.
+  */
+  overflow: visible;
+  display: flex;
+  flex-direction: column;
+  padding: 14px 16px 12px;
+  box-sizing: border-box;
+
+  .propose-time-header {
+    font-weight: @font-weight-semi-bold;
+    margin-bottom: 2px;
+  }
+
+  // The slot the organizer currently holds, so the proposal reads as a change rather than
+  // an isolated time.
+  .propose-time-original {
+    color: @text-color-subtle;
+    font-size: 0.9em;
+    margin-bottom: 12px;
+  }
+
+  /*
+  Deliberately not a scroll container.
+
+  The time picker's option list is absolutely positioned and hangs below its field, taller
+  than the popover itself. Any `overflow` other than visible here clips it - and overflow-x
+  cannot stay visible while overflow-y scrolls, since a scrolling axis forces the other to
+  clip too. So this box grows freely and lets the list escape, the way a native select does;
+  the popover's own max-height is what keeps the whole thing on screen.
+  */
+  .propose-time-body {
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .propose-time-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 12px;
+  }
+
+  .propose-time-field {
+    align-items: center;
+    display: flex;
+    gap: 8px;
+  }
+
+  .propose-time-label {
+    color: @text-color-subtle;
+    flex: 0 0 38px;
+    font-size: 0.9em;
+  }
+
+  .propose-time-times {
+    align-items: center;
+    display: flex;
+    gap: 6px;
+    // Above the note below it, so the open option list is not painted underneath.
+    position: relative;
+    z-index: 2;
+  }
+
+  /*
+  The date reads as a field, not a hyperlink.
+
+  DatePicker styles its value with @text-color-link app-wide, which is reasonable in prose
+  but wrong beside a boxed TimePicker: two adjacent controls in the same form looked like
+  entirely different kinds of thing. This gives it the same shape as the time inputs while
+  leaving the component's own behaviour alone.
+  */
+  .date-picker .day-text {
+    border: 1px solid @border-color-divider;
+    border-radius: @border-radius-base;
+    color: @text-color;
+    cursor: pointer;
+    display: inline-block;
+    padding: 3px 8px;
+
+    &:hover,
+    &.focused {
+      border-color: @accent-primary;
+      color: @text-color;
+    }
+  }
+
+  .propose-time-separator {
+    color: @text-color-subtle;
+    font-size: 0.9em;
+  }
+
+  .propose-time-duration {
+    color: @text-color-subtle;
+    font-size: 0.85em;
+    margin-left: 2px;
+    white-space: nowrap;
+  }
+
+  .propose-time-comment {
+    // Small but never absent: on a short window the note is what gives, not the controls.
+    min-height: 44px;
+    background: @background-primary;
+    border: 1px solid @border-color-divider;
+    border-radius: @border-radius-base;
+    box-sizing: border-box;
+    color: @text-color;
+    font-family: inherit;
+    font-size: inherit;
+    margin-bottom: 12px;
+    padding: 6px 8px;
+    // Vertical only: the popover has a fixed width, and a horizontal drag would leave the
+    // field wider than the container it sits in.
+    resize: vertical;
+    width: 100%;
+
+    &::placeholder {
+      color: @text-color-very-subtle;
+    }
+    &:focus {
+      border-color: @accent-primary;
+      outline: none;
+    }
+  }
+
+  .propose-time-actions {
+    display: flex;
+    flex: 0 0 auto;
+    gap: 8px;
+    justify-content: flex-end;
+  }
+}
