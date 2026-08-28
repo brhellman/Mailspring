@@ -17,7 +17,7 @@ interface ShowAsSelectorProps {
 
 export const ShowAsSelector: React.FC<ShowAsSelectorProps> = ({ value, onChange }) => {
   return (
-    <EventPropertyRow label={localized('show as:')}>
+    <EventPropertyRow label={localized('Show as')}>
       <select
         className="show-as-select"
         value={value}

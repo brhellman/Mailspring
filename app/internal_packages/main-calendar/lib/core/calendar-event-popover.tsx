@@ -15,13 +15,7 @@ import {
   SyncbackEventTask,
   CalendarDateUtils,
 } from 'mailspring-exports';
-import {
-  DatePicker,
-  RetinaImg,
-  ScrollRegion,
-  TabGroupRegion,
-  TimePicker,
-} from 'mailspring-component-kit';
+import { DatePicker, RetinaImg, TabGroupRegion, TimePicker } from 'mailspring-component-kit';
 import { EventAttendeesInput } from './event-attendees-input';
 import {
   EventOccurrence,
@@ -84,6 +78,14 @@ function frequencyToRepeatOption(frequency: string | undefined): RepeatOption {
       return 'none';
   }
 }
+
+// A drawn glyph rather than a "×" character: the multiplication sign inherits the body
+// font's weight and baseline, so it sat high and thin next to the section title.
+const closeGlyph = (
+  <svg width="9" height="9" viewBox="0 0 9 9" fill="none" aria-hidden="true">
+    <path d="M1 1l7 7M8 1l-7 7" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+  </svg>
+);
 
 interface CalendarEventPopoverProps {
   event: EventOccurrence;
@@ -530,6 +532,7 @@ export class CalendarEventPopover extends React.Component<
             <input
               className="title"
               type="text"
+              spellCheck={false}
               aria-label={localized('Event title')}
               placeholder={localized('New Event')}
               value={title}
@@ -569,14 +572,14 @@ export class CalendarEventPopover extends React.Component<
             />
 
             {/* Start/End times using property rows */}
-            <EventPropertyRow label={localized('starts:')}>
+            <EventPropertyRow label={localized('Starts')}>
               <DatePicker value={start * 1000} onChange={(ts) => this.updateStart(ts / 1000)} />
               {!allDay && (
                 <TimePicker value={start * 1000} onChange={(ts) => this.updateStart(ts / 1000)} />
               )}
             </EventPropertyRow>
 
-            <EventPropertyRow label={localized('ends:')}>
+            <EventPropertyRow label={localized('Ends')}>
               <DatePicker
                 value={(allDay ? inclusiveAllDayEnd(end) : end) * 1000}
                 onChange={(ts) =>
@@ -620,12 +623,14 @@ export class CalendarEventPopover extends React.Component<
               <div className="expanded-section">
                 <div className="section-header">
                   <span className="section-title">{localized('Invitees')}</span>
-                  <span
+                  <button
                     className="section-close"
+                    type="button"
+                    aria-label={localized('Remove Invitees')}
                     onClick={() => this.setState({ showInvitees: false })}
                   >
-                    ×
-                  </span>
+                    {closeGlyph}
+                  </button>
                 </div>
                 <EventAttendeesInput
                   ref={this.attendeesInputRef}
@@ -645,12 +650,14 @@ export class CalendarEventPopover extends React.Component<
               <div className="expanded-section">
                 <div className="section-header">
                   <span className="section-title">{localized('Notes')}</span>
-                  <span
+                  <button
                     className="section-close"
+                    type="button"
+                    aria-label={localized('Remove Notes')}
                     onClick={() => this.setState({ showNotes: false })}
                   >
-                    ×
-                  </span>
+                    {closeGlyph}
+                  </button>
                 </div>
                 <textarea
                   ref={this.notesTextareaRef}
@@ -702,10 +709,17 @@ export class CalendarEventPopover extends React.Component<
   }
 }
 
+// A company-wide invitation runs to dozens of attendees. Showing them all pushes the notes -
+// which is where the agenda and the meeting link live - an entire scroll below the fold.
+const COLLAPSED_INVITEE_COUNT = 8;
+
 class CalendarEventPopoverUnenditable extends React.Component<
-  CalendarEventPopoverProps & { editable: boolean; onEdit: () => void }
+  CalendarEventPopoverProps & { editable: boolean; onEdit: () => void },
+  { allInviteesShown: boolean }
 > {
   descriptionRef = React.createRef<HTMLDivElement>();
+
+  state = { allInviteesShown: false };
 
   renderTime() {
     const { event } = this.props;
@@ -716,9 +730,10 @@ class CalendarEventPopoverUnenditable extends React.Component<
       const lastDay = moment(CalendarDateUtils.dayStartUnix(event.endDate) * 1000);
       return (
         <div>
-          {event.startDate === event.endDate ? date : `${date} – ${lastDay.format('MMMM D')}`}
-          <br />
-          {localized('All day')}
+          <div className="when-date">
+            {event.startDate === event.endDate ? date : `${date} – ${lastDay.format('MMMM D')}`}
+          </div>
+          <div className="when-time">{localized('All day')}</div>
         </div>
       );
     }
@@ -729,9 +744,8 @@ class CalendarEventPopoverUnenditable extends React.Component<
     const timeRange = `${formatTime(startMoment)} - ${formatTime(endMoment)}`;
     return (
       <div>
-        {date}
-        <br />
-        {timeRange}
+        <div className="when-date">{date}</div>
+        <div className="when-time">{timeRange}</div>
       </div>
     );
   }
@@ -785,6 +799,13 @@ class CalendarEventPopoverUnenditable extends React.Component<
 
     const notes = extractNotesFromDescription(description);
 
+    const sortedAttendees = sortAttendeesByStatus(attendees);
+    const inviteesCollapsed =
+      !this.state.allInviteesShown && sortedAttendees.length > COLLAPSED_INVITEE_COUNT;
+    const shownAttendees = inviteesCollapsed
+      ? sortedAttendees.slice(0, COLLAPSED_INVITEE_COUNT)
+      : sortedAttendees;
+
     return (
       <div className="calendar-event-popover" tabIndex={0}>
         <div className="title-wrapper">
@@ -810,72 +831,90 @@ class CalendarEventPopoverUnenditable extends React.Component<
               )}
             </div>
           )}
-          <div className="section">{this.renderTime()}</div>
+          <div className="section when">{this.renderTime()}</div>
           {this._renderProposeNewTime()}
-          <ScrollRegion className="section invitees">
-            <div className="label">{localized(`Invitees`)}: </div>
-            <div className="invitees-list">
-              {sortAttendeesByStatus(attendees).map((a, idx) => {
-                const partstat = a.partstat || 'NEEDS-ACTION';
-                const questionMarkIcon = (
-                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-                    <path
-                      d="M3.5 3.5a1.5 1.5 0 0 1 2.6 1c0 1-1.1 1-1.1 2"
-                      stroke="currentColor"
-                      strokeWidth="1.2"
-                      strokeLinecap="round"
-                    />
-                    <circle cx="5" cy="8.5" r="0.75" fill="currentColor" />
-                  </svg>
-                );
-                let statusIcon: React.ReactNode;
-                let statusClass = 'needs-action';
-                if (partstat === 'ACCEPTED') {
-                  statusIcon = (
+          {attendees.length > 0 && (
+            <div className="section invitees">
+              <div className="label">
+                {localized(`Invitees`)}
+                <span className="count">{attendees.length}</span>
+              </div>
+              <div className="invitees-list">
+                {shownAttendees.map((a, idx) => {
+                  const partstat = a.partstat || 'NEEDS-ACTION';
+                  const questionMarkIcon = (
                     <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
                       <path
-                        d="M1.5 5.5L4 8l4.5-6"
+                        d="M3.5 3.5a1.5 1.5 0 0 1 2.6 1c0 1-1.1 1-1.1 2"
                         stroke="currentColor"
-                        strokeWidth="1.5"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
-                      />
-                    </svg>
-                  );
-                  statusClass = 'accepted';
-                } else if (partstat === 'DECLINED') {
-                  statusIcon = (
-                    <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-                      <path
-                        d="M2 2l6 6M8 2l-6 6"
-                        stroke="currentColor"
-                        strokeWidth="1.5"
+                        strokeWidth="1.2"
                         strokeLinecap="round"
                       />
+                      <circle cx="5" cy="8.5" r="0.75" fill="currentColor" />
                     </svg>
                   );
-                  statusClass = 'declined';
-                } else if (partstat === 'TENTATIVE') {
-                  statusIcon = questionMarkIcon;
-                  statusClass = 'tentative';
-                } else {
-                  statusIcon = questionMarkIcon;
-                }
-                return (
-                  <div key={idx} className={`attendee-chip ${statusClass}`}>
-                    <span className="attendee-status">{statusIcon}</span>
-                    <span className="attendee-name">{a.name || a.email}</span>
-                  </div>
-                );
-              })}
+                  let statusIcon: React.ReactNode;
+                  let statusClass = 'needs-action';
+                  if (partstat === 'ACCEPTED') {
+                    statusIcon = (
+                      <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                        <path
+                          d="M1.5 5.5L4 8l4.5-6"
+                          stroke="currentColor"
+                          strokeWidth="1.5"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    );
+                    statusClass = 'accepted';
+                  } else if (partstat === 'DECLINED') {
+                    statusIcon = (
+                      <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+                        <path
+                          d="M2 2l6 6M8 2l-6 6"
+                          stroke="currentColor"
+                          strokeWidth="1.5"
+                          strokeLinecap="round"
+                        />
+                      </svg>
+                    );
+                    statusClass = 'declined';
+                  } else if (partstat === 'TENTATIVE') {
+                    statusIcon = questionMarkIcon;
+                    statusClass = 'tentative';
+                  } else {
+                    statusIcon = questionMarkIcon;
+                  }
+                  return (
+                    <div key={idx} className={`attendee-chip ${statusClass}`}>
+                      <span className="attendee-status">{statusIcon}</span>
+                      <span className="attendee-name">{a.name || a.email}</span>
+                    </div>
+                  );
+                })}
+              </div>
+              {sortedAttendees.length > COLLAPSED_INVITEE_COUNT && (
+                <button
+                  className="invitees-toggle"
+                  type="button"
+                  onClick={() => this.setState({ allInviteesShown: inviteesCollapsed })}
+                >
+                  {inviteesCollapsed
+                    ? localized('Show all %@', `${sortedAttendees.length}`)
+                    : localized('Show fewer')}
+                </button>
+              )}
             </div>
-          </ScrollRegion>
-          <ScrollRegion className="section description">
-            <div className="description">
-              <div className="label">{localized(`Notes`)}: </div>
-              <div ref={this.descriptionRef}>{notes}</div>
+          )}
+          {notes.trim().length > 0 && (
+            <div className="section description">
+              <div className="label">{localized(`Notes`)}</div>
+              <div className="notes-body" ref={this.descriptionRef}>
+                {notes}
+              </div>
             </div>
-          </ScrollRegion>
+          )}
         </div>
       </div>
     );

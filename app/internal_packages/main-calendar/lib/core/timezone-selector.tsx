@@ -55,7 +55,7 @@ export const TimeZoneSelector: React.FC<TimeZoneSelectorProps> = ({ value, onCha
     : [value, ...COMMON_TIMEZONES];
 
   return (
-    <EventPropertyRow label={localized('time zone:')}>
+    <EventPropertyRow label={localized('Time zone')}>
       <select className="timezone-select" value={value} onChange={(e) => onChange(e.target.value)}>
         {timezones.map((tz) => (
           <option key={tz} value={tz}>
