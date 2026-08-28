@@ -44,6 +44,8 @@ export const DateInput: typeof import('../components/date-input').default;
 export * from '../components/mini-month-view';
 export * from '../components/date-picker';
 export const TimePicker: typeof import('../components/time-picker').default;
+export const ProposeTimePopover: typeof import('../components/propose-time-popover').ProposeTimePopover;
+export const formatProposedTime: typeof import('../components/propose-time-popover').formatProposedTime;
 export const Table: typeof import('../components/table/table').default;
 export const TableRow: typeof import('../components/table/table').TableRow;
 export const TableCell: typeof import('../components/table/table').TableCell;

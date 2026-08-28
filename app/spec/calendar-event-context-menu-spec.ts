@@ -45,6 +45,7 @@ function menuFor(occ: any, readOnly = false) {
     editable: !readOnly && occ.isMine,
     onOpen: () => {},
     onDelete: () => {},
+    onProposeNewTime: () => {},
   });
 }
 
@@ -115,16 +116,29 @@ describe('CalendarEventContextMenu', function () {
     });
   });
 
-  it('offers viewing, the three responses, and delete on an invitation', function () {
-    // Not "Edit": only the organizer revises a meeting (RFC 5546 section 2.1.4). Deleting is
-    // still ours - that removes our own copy, it doesn't change anyone else's.
+  it('offers viewing, the responses, a counter-proposal, and delete on an invitation', function () {
+    // Not "Edit": only the organizer revises a meeting (RFC 5546 section 2.1.4). Proposing a
+    // new time is the affordance that replaces editing for an attendee. Deleting is still
+    // ours - that removes our own copy, it doesn't change anyone else's.
     expect(labels(menuFor(occurrence()))).toEqual([
       'View Event',
       'Accept',
       'Maybe',
       'Decline',
+      'Propose New Time...',
       'Delete Event',
     ]);
+  });
+
+  it('offers a counter-proposal even on a read-only calendar', function () {
+    // It only mails the organizer; there is nothing local to write, so writability is
+    // irrelevant here - unlike the responses, which are disabled.
+    expect(labels(menuFor(occurrence(), true))).toContain('Propose New Time...');
+  });
+
+  it('does not offer a counter-proposal on a meeting we organize', function () {
+    // The organizer changes the time; they do not ask themselves for it.
+    expect(labels(menuFor(myOwnEvent()))).not.toContain('Propose New Time...');
   });
 
   it('offers editing on a meeting we organize', function () {
@@ -139,6 +153,7 @@ describe('CalendarEventContextMenu', function () {
       'Accept',
       'Maybe',
       'Decline',
+      'Propose New Time...',
       'Delete Event',
     ]);
   });
@@ -166,6 +181,7 @@ describe('CalendarEventContextMenu', function () {
       'Accept',
       'Maybe',
       'Decline',
+      'Propose New Time...',
     ]);
   });
 
