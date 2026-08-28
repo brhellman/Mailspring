@@ -182,17 +182,30 @@ body.platform-win32 {
       z-index: 3;
     }
 
-    // An invitation we sent that guests haven't all answered: dashed outline, keeping the
-    // calendar's own colour. Distinct from .pending, which marks an invitation *we* owe a
-    // reply to and greys the event out.
+    /*
+    An invitation we sent that guests haven't all answered: dashed outline, keeping the
+    calendar's own colour. Distinct from .pending, which marks an invitation *we* owe a reply
+    to and greys the event out.
+
+    An outline rather than a border, the same way .drag-preview below does it. The chip is
+    border-box so a border did not resize it, but it still ate a pixel of padding and nudged
+    the title sideways, so an event awaiting replies sat misaligned against the ones above
+    and below it.
+    */
     &.awaiting-guests {
-      border: 1px dashed var(--event-band-color, currentColor);
+      outline: 1px dashed var(--event-band-color, currentColor);
+      outline-offset: -1px;
     }
 
-    // Tentative/pending events: gray background with theme-colored left band
-    &.pending {
-      background-color: rgba(128, 128, 128, 0.15);
+    /*
+    An invitation we have not answered: the calendar's own colour, overlaid with hatching.
 
+    Not a grey fill. CalendarEvent sets background-color inline from the calendar's colour, so
+    a background-color here never applied in the first place - and forcing it past the inline
+    style would repaint the event as though it had moved to a different calendar, which is the
+    same reason .selected above draws a ring instead of a fill.
+    */
+    &.pending {
       .default-header,
       .event-details {
         color: @text-color;
@@ -230,6 +243,60 @@ body.platform-win32 {
       }
       &:before {
         display: none; // Hide the left accent bar for cancelled events
+      }
+    }
+
+    // Recurring event icon in top-right corner
+    .recurring-icon {
+      position: absolute;
+      top: 3px;
+      right: 3px;
+      color: var(--event-text-color, inherit);
+      opacity: 0.7;
+      flex-shrink: 0;
+    }
+
+    // No .selected override for the icon's colour: selection is a ring now, so the chip keeps
+    // its calendar's fill and text, and inverting only the icon left it a different colour
+    // from the title beside it - white on a pale fill in the light theme.
+
+    // Hide recurring icon on horizontal (all-day) events - too small
+    &.horizontal .recurring-icon {
+      display: none;
+    }
+
+    // Exception events: small "Modified" tag in corner
+    &.exception {
+      .exception-tag {
+        position: absolute;
+        top: 2px;
+        right: 2px;
+        font-size: 8px;
+        font-weight: @font-weight-semi-bold;
+        text-transform: uppercase;
+        background: var(--event-band-color, rgba(0, 0, 0, 0.2));
+        color: rgba(255, 255, 255, 0.9);
+        padding: 1px 3px;
+        border-radius: 2px;
+        line-height: 1;
+        letter-spacing: 0.3px;
+      }
+    }
+
+    // Hide exception tag on cancelled events (the visual is clear enough)
+    &.cancelled.exception {
+      .exception-tag {
+        display: none;
+      }
+    }
+
+    // Draggable events - cursor changes handled in JS
+    // Note: We can't use ::before/::after for resize handles because
+    // ::before is already used for the left accent bar
+    &.draggable {
+      // Slight highlight on hover to indicate draggability
+      &:hover {
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
       }
     }
 
@@ -607,8 +674,10 @@ body.platform-win32 {
         z-index: 3;
       }
 
+      // Outline rather than border - see the note in the week/day view rule above.
       &.awaiting-guests {
-        border: 1px dashed var(--event-band-color, currentColor);
+        outline: 1px dashed var(--event-band-color, currentColor);
+        outline-offset: -1px;
       }
 
       // Tentative/pending events: hatched diagonal stripes pattern
