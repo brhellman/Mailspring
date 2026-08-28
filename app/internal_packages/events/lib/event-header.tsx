@@ -1,4 +1,4 @@
-import { RetinaImg } from 'mailspring-component-kit';
+import { RetinaImg, ProposeTimePopover, formatProposedTime } from 'mailspring-component-kit';
 
 import React from 'react';
 import fs from 'fs';
@@ -31,7 +31,7 @@ import {
   RSVPTargetResolution,
 } from './rsvp-target';
 import { findConflicts, CalendarConflict } from '../../../src/calendar-conflicts';
-import { ProposeTimePopover, formatProposedTime } from './propose-time-popover';
+
 import { findOneIana } from 'windows-iana';
 
 const moment = require('moment-timezone');
