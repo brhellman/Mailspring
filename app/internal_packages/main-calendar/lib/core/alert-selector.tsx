@@ -34,7 +34,7 @@ const ALERT_OPTIONS: { value: AlertTiming; label: string }[] = [
 
 export const AlertSelector: React.FC<AlertSelectorProps> = ({ value, onChange }) => {
   return (
-    <EventPropertyRow label={localized('alert:')}>
+    <EventPropertyRow label={localized('Alert')}>
       <select
         className="alert-select"
         value={value}
