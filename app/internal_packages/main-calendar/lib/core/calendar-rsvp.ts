@@ -116,3 +116,81 @@ export async function respondToCalendarEvent(
     console.warn(`Calendar RSVP: could not build the reply: ${e.message}`);
   }
 }
+
+/**
+ * Counter-proposes a different time for a meeting we were invited to, from the calendar.
+ *
+ * Only the organizer may revise a meeting (RFC 5546 section 2.1.4), so an attendee who wants
+ * a different slot asks for one instead - iTIP's COUNTER method, section 3.2.7. The message
+ * header offers this on the invitation email, but our own accept flow puts the invitation on
+ * the calendar, and by the time someone wants to move it the email is long buried. The
+ * calendar is where they look.
+ *
+ * Nothing is written locally: a counter is a request, and the event does not change unless
+ * the organizer accepts and sends the update back.
+ */
+export async function proposeNewTimeForCalendarEvent(
+  occurrence: EventOccurrence,
+  proposal: { start: Date; end: Date; comment: string }
+): Promise<void> {
+  const eventId = parseEventIdFromOccurrence(occurrence.id);
+  const event = await DatabaseStore.find<Event>(Event, eventId);
+  if (!event) {
+    console.warn(`Calendar counter-proposal: could not find event ${eventId}`);
+    return;
+  }
+
+  let parsed: ReturnType<typeof CalendarUtils.parseICSString>;
+  try {
+    parsed = CalendarUtils.parseICSString(event.ics);
+  } catch (e) {
+    AppEnv.showErrorDialog(localized("Sorry, this event's data could not be read."));
+    return;
+  }
+
+  const me = CalendarUtils.selfParticipant(parsed.event, event.accountId);
+  if (!me || !me.email) {
+    AppEnv.showErrorDialog(
+      localized("You're not on this event's guest list, so there's no new time to propose.")
+    );
+    return;
+  }
+
+  const organizerEmail = CalendarUtils.emailFromParticipantURI(parsed.event.organizer);
+  if (!organizerEmail) {
+    AppEnv.showErrorDialog(
+      localized("This event has no organizer, so there's nobody to propose a new time to.")
+    );
+    return;
+  }
+
+  let ics: string;
+  try {
+    ics = ICSEventHelpers.createCounterProposal(event.ics, {
+      email: me.email,
+      name: me.component.getParameter('cn') as string,
+      start: proposal.start,
+      end: proposal.end,
+      comment: proposal.comment,
+    });
+  } catch (e) {
+    console.warn(`Calendar counter-proposal: could not build it: ${e.message}`);
+    ics = null;
+  }
+  if (!ics) {
+    AppEnv.showErrorDialog(
+      localized("Sorry, we couldn't build a counter-proposal for this event.")
+    );
+    return;
+  }
+
+  Actions.queueTask(
+    EventRSVPTask.forProposingNewTime({
+      accountId: event.accountId,
+      to: organizerEmail,
+      ics,
+      summary: parsed.event.summary,
+      comment: proposal.comment,
+    })
+  );
+}

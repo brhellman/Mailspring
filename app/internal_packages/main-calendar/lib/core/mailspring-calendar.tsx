@@ -20,6 +20,7 @@ import {
   ResizableRegion,
   KeyCommandsRegion,
   MiniMonthView,
+  ProposeTimePopover,
 } from 'mailspring-component-kit';
 import { CalendarMenuCommands } from '../calendar-menu-commands';
 import { DayView } from './day-view';
@@ -37,6 +38,8 @@ import {
   occurrenceEndUnix,
 } from './calendar-data-source';
 import { CalendarEventContextMenu } from './calendar-event-context-menu';
+import { proposeNewTimeForCalendarEvent } from './calendar-rsvp';
+
 import { CalendarView, DEFAULT_TIMED_EVENT_DURATION_SECONDS } from './calendar-constants';
 import { CalendarEmptyState } from './calendar-empty-state';
 import {
@@ -368,8 +371,37 @@ export class MailspringCalendar extends React.Component<
       editable: !readOnly && occurrence.isMine,
       onOpen: () => this._openEventPopover(occurrence, true),
       onDelete: () => this._deleteEvent(occurrence),
+      onProposeNewTime: () => this._onOpenProposeTime(occurrence),
     }).displayMenu();
   };
+
+  /*
+  Opens the picker for a counter-proposal, anchored on the event itself.
+
+  The popover only gathers a time; proposeNewTimeForCalendarEvent does the work of building
+  the COUNTER and mailing it. Nothing is written to the calendar - the organizer decides
+  whether the meeting actually moves.
+  */
+  _onOpenProposeTime(occurrence: EventOccurrence) {
+    const eventEl = document.getElementById(occurrence.id);
+    const start = occurrenceStartUnix(occurrence);
+    const end = occurrenceEndUnix(occurrence);
+
+    Actions.openPopover(
+      <ProposeTimePopover
+        start={start}
+        end={end}
+        onPropose={(proposal) => proposeNewTimeForCalendarEvent(occurrence, proposal)}
+      />,
+      {
+        originRect: eventEl
+          ? eventEl.getBoundingClientRect()
+          : new DOMRect(window.innerWidth / 2, window.innerHeight / 2, 2, 2),
+        direction: 'right',
+        fallbackDirection: 'left',
+      }
+    );
+  }
 
   /**
    * Right-clicking empty space offers to create an event there; the double-click that also
