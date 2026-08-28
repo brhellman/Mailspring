@@ -1,6 +1,13 @@
 # EventRSVPTask Sync Engine Specification
 
-This document specifies exactly how the C++ sync engine (Mailspring-Sync) should handle the `EventRSVPTask` to properly format and send an iMIP RSVP reply according to RFC 5546 (iTIP) and RFC 6047 (iMIP).
+This document specifies exactly how the C++ sync engine (Mailspring-Sync) should handle the `EventRSVPTask` to properly format and send an iMIP message according to RFC 5546 (iTIP) and RFC 6047 (iMIP).
+
+Two iTIP methods travel this way, selected by the task's `method` field:
+
+- **`REPLY`** — the attendee answers the invitation with a participation status. This is the bulk of the document below.
+- **`COUNTER`** — the attendee proposes a different time (RFC 5546 section 3.2.7), which Google Calendar surfaces as "Propose a new time". See [COUNTER](#counter) at the end.
+
+An absent `method` means `REPLY`, so a task queued by a client older than counter-proposal support still sends correctly.
 
 ## Overview
 
@@ -166,9 +173,9 @@ Content-Type: multipart/alternative; boundary="----=_Part_123456"
 
 ------=_Part_123456
 Content-Type: text/plain; charset=UTF-8
-Content-Transfer-Encoding: 7bit
+Content-Transfer-Encoding: base64
 
-Jane Smith has accepted the invitation to: Team Meeting
+(base64 of "Jane Smith has accepted the invitation to: Team Meeting")
 
 ------=_Part_123456
 Content-Type: text/calendar; method=REPLY; charset=UTF-8
@@ -189,15 +196,25 @@ The sync engine should validate/ensure:
 
 1. [ ] `ics` field is not empty
 2. [ ] `to` field contains a valid email address
-3. [ ] `ics` contains `METHOD:REPLY`
-4. [ ] `ics` contains exactly one `ATTENDEE` property (the replying user)
-5. [ ] The `ATTENDEE` has a valid `PARTSTAT` parameter
+3. [ ] `method` is `REPLY` or `COUNTER` (absent means `REPLY`)
+4. [ ] `ics` contains `METHOD:` matching the method being sent
+5. [ ] `UID`, `DTSTAMP` and `ORGANIZER` are present, whichever the method
+
+For `REPLY`:
+
+6. [ ] `ics` contains exactly one `ATTENDEE` property (the replying user)
+7. [ ] The `ATTENDEE` has a valid `PARTSTAT` parameter
+
+For `COUNTER`:
+
+6. [ ] `ics` contains at least one `ATTENDEE` — the attendee making the proposal
+7. [ ] `ics` contains the proposed `DTSTART`. A counter states a time rather than a status, so it carries no `PARTSTAT` to validate.
 
 ### MIME Construction:
 
-1. [ ] `Content-Type` header includes `method=REPLY` parameter
+1. [ ] `Content-Type` header includes a `method=` parameter matching the `METHOD` inside the ICS — receiving calendars discard the part when they disagree
 2. [ ] `Content-Type` header includes `charset=UTF-8` parameter
-3. [ ] Content-Transfer-Encoding is `base64` (or `quoted-printable`)
+3. [ ] Content-Transfer-Encoding is `base64` (or `quoted-printable`) on **both** parts. The text/plain part carries the event summary and any user-written note, both UTF-8 and routinely non-ASCII; declaring `7bit` over 8-bit bytes violates RFC 2045 section 6.2 and a relay without 8BITMIME (RFC 6152) may mangle or refuse it
 4. [ ] `From` header matches the replying attendee's email
 5. [ ] `To` header is the organizer's email (from task `to` field)
 6. [ ] `Subject` is set from task `subject` field
@@ -307,3 +324,25 @@ END:VCALENDAR
 ```
 
 Note: `REQUEST-STATUS:2.0;Success` is optional but recommended to indicate successful processing of the request.
+
+## COUNTER
+
+A `COUNTER` proposes a different time for a meeting the user was invited to (RFC 5546 section 3.2.7).
+
+It is the original event carrying the proposed `DTSTART`/`DTEND`, not a fresh event: it keeps the `UID` and `ORGANIZER` so the organizer's calendar can match it to the invitation it answers, and advances `DTSTAMP` so a later proposal supersedes an earlier one. `SEQUENCE` is **not** advanced — the attendee is not revising the event, only suggesting.
+
+Only the proposing attendee is listed. Echoing the rest of the guest list back would invite the organizer's calendar to overwrite responses it already holds.
+
+Recurrence is dropped (`RRULE`, `RDATE`, `EXDATE`, `RECURRENCE-ID`), because a counter-proposal names one specific time and an inherited rule would read as "move the entire series here". `DURATION` is dropped too, since setting `DTEND` makes the two mutually exclusive (RFC 5545 section 3.6.1).
+
+| Property | Presence | Notes |
+|----------|----------|-------|
+| `METHOD` | **Required (1)** | MUST be `COUNTER`, and MUST match the `method=` MIME parameter |
+| `UID` | **Required (1)** | MUST match the invitation being countered |
+| `DTSTAMP` | **Required (1)** | Advances so a later proposal wins |
+| `ORGANIZER` | **Required (1)** | The organizer being asked |
+| `ATTENDEE` | **Required (1+)** | The proposing attendee, `PARTSTAT=TENTATIVE` |
+| `DTSTART` | **Required (1)** | The proposed time — this is the substance of the message |
+| `COMMENT` | Optional | A note for the organizer |
+
+The organizer's client decides what to do with it; there is no state to keep on the sending side, and a `COUNTER` must not mark the invitation as answered.
