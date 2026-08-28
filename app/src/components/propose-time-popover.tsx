@@ -10,6 +10,19 @@ import { DatePicker, TimePicker } from 'mailspring-component-kit';
  */
 const toPicker = (unixSeconds: number) => unixSeconds * 1000;
 
+/**
+ * The existing slot on one line: "Mon, Aug 24 · 12:00 PM – 12:30 PM".
+ *
+ * Kept short deliberately - it sits above the pickers as context, and the long form wrapped
+ * onto a second line in a narrow window, which made a reference line look like a heading.
+ */
+function compactSlot(start: number, end: number): string {
+  const s = moment.unix(start);
+  const e = moment.unix(end);
+  const time = (m: Moment) => m.format('h:mm A');
+  return `${s.format('ddd, MMM D')} · ${time(s)} – ${time(e)}`;
+}
+
 interface ProposeTimePopoverProps {
   /** The invitation's current start and end, in unix seconds. */
   start: number;
@@ -80,33 +93,60 @@ export class ProposeTimePopover extends React.Component<
     const { start, end, comment } = this.state;
     const unchanged = start === this.props.start && end === this.props.end;
     const minutes = Math.round((end - start) / 60);
+    const duration =
+      minutes % 60 === 0
+        ? localized('%@ hr', minutes / 60)
+        : minutes > 60
+          ? localized('%@ hr %@ min', Math.floor(minutes / 60), minutes % 60)
+          : localized('%@ min', minutes);
 
     return (
       <div className="propose-time-popover">
-        <div className="propose-time-row">
-          <DatePicker value={toPicker(start)} onChange={this._onChangeDay} />
+        <div className="propose-time-header">{localized('Propose a new time')}</div>
+
+        {/* What the organizer currently has, so the change being asked for is legible
+            without going back to the event. */}
+        <div className="propose-time-original">
+          {localized('Currently %@', compactSlot(this.props.start, this.props.end))}
         </div>
-        <div className="propose-time-row">
-          <TimePicker value={toPicker(start)} onChange={this._onChangeStartTime} />
-          <span className="propose-time-separator">{localized('to')}</span>
-          <TimePicker value={toPicker(end)} onChange={this._onChangeEndTime} />
+
+        <div className="propose-time-body">
+          <div className="propose-time-fields">
+            <label className="propose-time-field">
+              <span className="propose-time-label">{localized('Date')}</span>
+              <DatePicker value={toPicker(start)} onChange={this._onChangeDay} />
+            </label>
+
+            <div className="propose-time-field">
+              <span className="propose-time-label">{localized('Time')}</span>
+              <div className="propose-time-times">
+                <TimePicker value={toPicker(start)} onChange={this._onChangeStartTime} />
+                <span className="propose-time-separator">{localized('to')}</span>
+                <TimePicker value={toPicker(end)} onChange={this._onChangeEndTime} />
+                <span className="propose-time-duration">{duration}</span>
+              </div>
+            </div>
+          </div>
+
+          <textarea
+            className="propose-time-comment"
+            rows={3}
+            value={comment}
+            placeholder={localized('Add a note for the organizer (optional)')}
+            onChange={(e) => this.setState({ comment: e.target.value })}
+          />
         </div>
-        <div className="propose-time-summary">
-          {`${moment.unix(start).format('dddd, MMMM Do')} · ${minutes} `}
-          {localized('minutes')}
-        </div>
-        <textarea
-          className="propose-time-comment"
-          rows={2}
-          value={comment}
-          placeholder={localized('Add a note for the organizer (optional)')}
-          onChange={(e) => this.setState({ comment: e.target.value })}
-        />
+
         <div className="propose-time-actions">
           <button className="btn" onClick={() => Actions.closePopover()}>
             {localized('Cancel')}
           </button>
-          <button className="btn btn-emphasis" disabled={unchanged} onClick={this._onSubmit}>
+          <button
+            className="btn btn-emphasis"
+            disabled={unchanged}
+            title={unchanged ? localized('Pick a different time first') : undefined}
+            onClick={this._onSubmit}
+          >
             {localized('Propose')}
           </button>
         </div>
