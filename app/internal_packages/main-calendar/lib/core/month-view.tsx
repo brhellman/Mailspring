@@ -9,7 +9,8 @@ import { HeaderControls } from './header-controls';
 import { EventOccurrence, eventCoversDate } from './calendar-data-source';
 import { Disposable } from 'rx-core';
 import { MonthViewDayCell } from './month-view-day-cell';
-import { getEventsWithDragPreview } from './calendar-drag-utils';
+import { getEventsWithDragPreview, withCreateDragPreview } from './calendar-drag-utils';
+import { sameCalendarIds } from './calendar-helpers';
 
 const DAYS_IN_WEEK = 7;
 const MAX_VISIBLE_EVENTS = 5;
@@ -39,7 +40,7 @@ export class MonthView extends React.Component<MailspringCalendarViewProps, Mont
   componentDidUpdate(prevProps: MailspringCalendarViewProps) {
     if (
       prevProps.focusedMoment !== this.props.focusedMoment ||
-      prevProps.disabledCalendars !== this.props.disabledCalendars
+      !sameCalendarIds(prevProps.disabledCalendars, this.props.disabledCalendars)
     ) {
       this.updateSubscription();
     }
@@ -97,7 +98,10 @@ export class MonthView extends React.Component<MailspringCalendarViewProps, Mont
 
   _getEventsForDay(day: Moment): EventOccurrence[] {
     const date = CalendarDateUtils.calendarDateFromUnix(day.unix());
-    const events = getEventsWithDragPreview(this.state.events, this.props.dragState);
+    const events = withCreateDragPreview(
+      getEventsWithDragPreview(this.state.events, this.props.dragState),
+      this.props.createDrag
+    );
 
     return events.filter((event) => eventCoversDate(event, date));
   }
@@ -161,6 +165,7 @@ export class MonthView extends React.Component<MailspringCalendarViewProps, Mont
               selectedEvents={this.props.selectedEvents}
               onEventClick={this.props.onEventClick}
               onEventDoubleClick={this.props.onEventDoubleClick}
+              onEventContextMenu={this.props.onEventContextMenu}
               onEventFocused={this.props.onEventFocused}
               onDayClick={this._onDayClick}
               dragState={this.props.dragState}
@@ -185,6 +190,7 @@ export class MonthView extends React.Component<MailspringCalendarViewProps, Mont
           onCalendarMouseMove={this.props.onCalendarMouseMove}
           onCalendarClick={this.props.onCalendarClick}
           onCalendarDoubleClick={this.props.onCalendarDoubleClick}
+          onCalendarContextMenu={this.props.onCalendarContextMenu}
         >
           <div className="top-banner">
             <InjectedComponentSet matching={{ role: 'Calendar:Week:Banner' }} direction="row" />

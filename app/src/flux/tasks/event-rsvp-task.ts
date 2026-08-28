@@ -11,12 +11,21 @@ import {
   Actions,
 } from 'mailspring-exports';
 
+/**
+ * Sends an iTIP response to a meeting organizer over email (RFC 5546 / RFC 6047).
+ *
+ * Two methods travel this way. REPLY answers the invitation with a participation status;
+ * COUNTER proposes a different time and carries no status. The sync engine defaults an
+ * absent `method` to REPLY, so a task queued before counter-proposals existed still sends.
+ */
 export class EventRSVPTask extends Task {
   ics: string;
   icsRSVPStatus: ICSParticipantStatus;
   subject: string;
   messageId: string;
   organizerEmail: string;
+  method: 'REPLY' | 'COUNTER';
+  comment: string;
 
   static attributes = {
     ...Task.attributes,
@@ -35,6 +44,12 @@ export class EventRSVPTask extends Task {
     }),
     messageId: Attributes.String({
       modelKey: 'messageId',
+    }),
+    method: Attributes.String({
+      modelKey: 'method',
+    }),
+    comment: Attributes.String({
+      modelKey: 'comment',
     }),
   };
 
@@ -63,19 +78,27 @@ export class EventRSVPTask extends Task {
       );
     }
 
-    // Update the replying attendee's participation status
-    me.component.setParameter('partstat', icsRSVPStatus);
-
     // Set METHOD to REPLY at the calendar level
     root.updatePropertyWithValue('method', 'REPLY');
 
-    // Per RFC 5546, a REPLY must have exactly one ATTENDEE - the replying user.
-    // Remove all other attendees from the VEVENT, keeping only the self-participant.
-    const vevent = root.getFirstSubcomponent('vevent');
-    const allAttendees = vevent.getAllProperties('attendee');
-    for (const attendee of allAttendees) {
-      if (attendee !== me.component) {
-        vevent.removeProperty(attendee);
+    // Per RFC 5546 section 3.2.3 a REPLY names exactly one ATTENDEE - the person replying.
+    // Every VEVENT has to be cleaned, not just the master: an invitation to a series carries
+    // its modified occurrences as further VEVENTs, and leaving their guest lists intact ships
+    // the organizer a REPLY that also purports to speak for everyone else.
+    const myEmail = me.email.toLowerCase();
+    for (const vevent of root.getAllSubcomponents('vevent')) {
+      let keptMine = false;
+      for (const attendee of vevent.getAllProperties('attendee')) {
+        const isMine = attendee
+          .getValues()
+          .some((v) => CalendarUtils.emailFromParticipantURI(String(v)) === myEmail);
+        if (isMine && !keptMine) {
+          attendee.setParameter('partstat', icsRSVPStatus);
+          attendee.removeParameter('rsvp');
+          keptMine = true;
+        } else {
+          vevent.removeProperty(attendee);
+        }
       }
     }
 
@@ -90,15 +113,51 @@ export class EventRSVPTask extends Task {
       messageId,
       ics: icsReplyData,
       icsRSVPStatus,
+      method: 'REPLY',
+    });
+  }
+
+  /**
+   * Proposes a different time for a meeting we were invited to.
+   *
+   * @param ics - A COUNTER built by ICSEventHelpers.createCounterProposal.
+   */
+  static forProposingNewTime({
+    accountId,
+    to,
+    messageId,
+    ics,
+    summary,
+    comment,
+  }: {
+    accountId: string;
+    to: string;
+    messageId?: string;
+    ics: string;
+    summary: string;
+    comment?: string;
+  }) {
+    return new EventRSVPTask({
+      to,
+      subject: localized('New time proposed: %@', summary),
+      accountId,
+      messageId,
+      ics,
+      method: 'COUNTER',
+      comment,
     });
   }
 
   label() {
-    return localized('Sending RSVP');
+    return this.method === 'COUNTER'
+      ? localized('Proposing a new time')
+      : localized('Sending RSVP');
   }
 
   async onSuccess() {
-    if (this.messageId && this.icsRSVPStatus) {
+    // A counter-proposal isn't an answer, so it must not make the Accept/Maybe/Decline
+    // buttons look answered.
+    if (this.messageId && this.icsRSVPStatus && this.method !== 'COUNTER') {
       const msg = await DatabaseStore.find<Message>(Message, this.messageId);
       if (msg) {
         Actions.queueTask(

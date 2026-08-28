@@ -30,6 +30,10 @@ export class Calendar extends Model {
       modelKey: 'readOnly',
       jsonKey: 'read_only',
     }),
+    ownership: Attributes.String({
+      modelKey: 'ownership',
+      jsonKey: 'owner',
+    }),
     color: Attributes.String({
       modelKey: 'color',
       jsonKey: 'color',
@@ -43,6 +47,13 @@ export class Calendar extends Model {
   public name: string;
   public description: string;
   public readOnly: boolean;
+  /**
+   * What the server said about who owns this calendar, from DAV:owner (RFC 3744 section
+   * 5.1): 'mine' for this account's own principal, 'other' for somebody else's, and empty
+   * when the server didn't answer. Used to tell our own copy of an invitation apart from a
+   * copy sitting on a calendar someone shared with us.
+   */
+  public ownership: 'mine' | 'other' | '';
   public color: string;
   public order: number;
 
