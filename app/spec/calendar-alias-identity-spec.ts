@@ -15,9 +15,9 @@ the Utils.emailIsEquivalent comparison inside it, are the code under test.
 */
 
 const ACCOUNT_ID = 'acct-alias-1';
-const PRIMARY = 'brian.hellman@linbit.com';
-const ALIAS = 'brian@alias.example.com';
-const ALIAS_SPEC = `Brian Hellman <${ALIAS}>`;
+const PRIMARY = 'primary@example.com';
+const ALIAS = 'the.alias@example.com';
+const ALIAS_SPEC = `Alias Name <${ALIAS}>`;
 const STRANGER = 'someone.else@example.org';
 
 function icsWith({ organizer, attendees }: { organizer: string; attendees: string[] }): string {
