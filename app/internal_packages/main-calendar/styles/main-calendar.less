@@ -38,6 +38,30 @@
     outline: none;
   }
 
+  /*
+  One treatment for every <select> in the card: a value that reads as text until you reach
+  for it, rather than a platform dropdown dropped into the middle of the form. The two call
+  sites differ only in how they take up space, so only that stays at the call site.
+  */
+  .popover-select() {
+    background: transparent;
+    border: none;
+    border-radius: @border-radius-small;
+    color: @text-color;
+    cursor: pointer;
+    font-size: @font-size-small;
+    padding: 2px 4px;
+
+    &:hover {
+      background-color: @background-secondary;
+    }
+
+    &:focus {
+      box-shadow: 0 0 0 2px rgb(from @accent-primary r g b / 40%);
+      outline: none;
+    }
+  }
+
   // TabGroupRegion renders a plain div around the whole editor, so the column
   // layout has to pass through it for the body to scroll and the footer to stay put.
   .popover-form {
@@ -284,23 +308,8 @@
       min-width: 0;
 
       select {
-        background: transparent;
-        border: none;
-        border-radius: @border-radius-small;
-        color: @text-color;
-        cursor: pointer;
-        font-size: @font-size-small;
+        .popover-select();
         max-width: 100%;
-        padding: 2px 4px;
-
-        &:hover {
-          background-color: @background-secondary;
-        }
-
-        &:focus {
-          box-shadow: 0 0 0 2px rgb(from @accent-primary r g b / 40%);
-          outline: none;
-        }
       }
 
       .time-picker-wrap .time-options {
@@ -379,24 +388,9 @@
     }
 
     select {
-      background: transparent;
-      border: none;
-      border-radius: @border-radius-small;
-      color: @text-color;
-      cursor: pointer;
+      .popover-select();
       flex: 1;
-      font-size: @font-size-small;
       min-width: 0;
-      padding: 2px 4px;
-
-      &:hover {
-        background-color: @background-secondary;
-      }
-
-      &:focus {
-        box-shadow: 0 0 0 2px rgb(from @accent-primary r g b / 40%);
-        outline: none;
-      }
     }
   }
 
