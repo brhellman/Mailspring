@@ -828,6 +828,8 @@ describe('createDragState anchored on the grid', function () {
       DEFAULT_DRAG_CONFIG
     );
     expect(dragged.previewStart).toBe(start + HOUR);
+  });
+});
 
 describe('canMoveEvent and the organizer', function () {
   it("refuses to reschedule someone else's meeting", function () {

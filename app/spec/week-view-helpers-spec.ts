@@ -36,6 +36,8 @@ function makeOccurrence(start: number, end: number, isAllDay = false): EventOccu
     description: '',
     isCancelled: false,
     isPending: false,
+    isAwaitingGuests: false,
+    isMine: true,
     isException: false,
     isRecurring: false,
     organizer: null,
