@@ -90,8 +90,15 @@ export async function respondToCalendarEvent(
     return;
   }
 
+  // Writing our answer onto a calendar the server has named as somebody else's edits their
+  // event, not ours. The invitation header refuses that through resolveRSVPTarget; this path
+  // has to refuse it on the same terms or the same meeting is answerable from the grid and
+  // not from the email. The reply below still goes out either way - telling the organizer
+  // and recording nothing locally is the lesser of the two.
   const calendar = await DatabaseStore.find<Calendar>(Calendar, event.calendarId);
-  if (calendar && !calendar.readOnly) {
+  const writable =
+    calendar && !calendar.readOnly && !CalendarUtils.isSomeoneElsesCalendar(calendar);
+  if (writable) {
     const ics = ICSEventHelpers.updateAttendeeStatus(event.ics, me.email, status);
     if (ics && ics !== event.ics) {
       const updated = event.clone();
