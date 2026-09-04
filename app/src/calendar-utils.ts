@@ -1,4 +1,4 @@
-import { AccountStore, RegExpUtils } from 'mailspring-exports';
+import { AccountStore, Calendar, RegExpUtils, Utils } from 'mailspring-exports';
 
 type ICAL = typeof import('ical.js').default;
 type ICALComponent = InstanceType<ICAL['Component']>;
@@ -190,4 +190,38 @@ export function selfParticipant(
     return acct && acct.id === accountId;
   });
   return me;
+}
+
+/**
+ * Whether a calendar belongs to the account, rather than being one somebody shared with it.
+ *
+ * This decides where an RSVP is written, so getting it wrong means editing an event on
+ * someone else's calendar.
+ *
+ * DAV:owner is the server's own answer (RFC 3744 section 5.1) and is taken whenever the
+ * server gives one. The fallback - matching the calendar's display name against the
+ * account's addresses, which is how Google, Google Workspace and Fastmail name a user's
+ * default calendar - only applies when the server said nothing, because a display name is
+ * text its owner chooses: somebody who shares a writable calendar named after the
+ * recipient's own address would otherwise capture their replies.
+ */
+export function isOwnCalendar(calendar: Calendar, addresses: string[]): boolean {
+  if (calendar.ownership === 'mine') return true;
+  if (calendar.ownership === 'other') return false;
+  return addresses.some((address) => Utils.emailIsEquivalent(calendar.name, address));
+}
+
+/**
+ * Whether the server has positively identified this calendar as somebody else's.
+ *
+ * Distinct from `!isOwnCalendar`: that is also true of a calendar nobody has said anything
+ * about, which the "only one candidate" fallbacks are willing to use. This is only true when
+ * the server named an owner and it wasn't us, which rules a calendar out entirely.
+ *
+ * Both paths that write an answer onto an event - the invitation header and the calendar's
+ * own RSVP - must agree on this, or the same meeting is answerable from one and not the
+ * other, and the disagreement is a write onto a colleague's calendar.
+ */
+export function isSomeoneElsesCalendar(calendar: Calendar | undefined | null): boolean {
+  return !!calendar && calendar.ownership === 'other';
 }
