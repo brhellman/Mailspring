@@ -172,6 +172,6 @@ export class SyncbackEventTask extends Task {
   what we asked it for.
   */
   async onSuccess() {
-    Actions.syncCalendarNow();
+    Actions.syncCalendarNow(this.accountId);
   }
 }
