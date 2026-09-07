@@ -1,3 +1,4 @@
+import ICAL from 'ical.js';
 import { Calendar, CalendarUtils, Event, Utils } from 'mailspring-exports';
 
 /** Where an RSVP will be recorded, once we're certain which copy of the event is ours. */
@@ -119,6 +120,68 @@ export function mayBeAddedToCalendar(organizerUri: string, addresses: string[]):
   const organizer = CalendarUtils.emailFromParticipantURI(organizerUri);
   if (!organizer) return false;
   return !addresses.some((a) => Utils.emailIsEquivalent(a, organizer));
+}
+
+/** Why a counter-proposal that arrived by email may not be applied to our copy. */
+export type CounterProposalProblem =
+  /** Our copy of the meeting is not one this account organizes. */
+  | 'not-our-meeting'
+  /** The message did not come from somebody on the guest list. */
+  | 'not-from-a-guest';
+
+/**
+ * Whether an emailed COUNTER may move our copy of the meeting.
+ *
+ * A COUNTER asks the organizer to move a meeting (RFC 5546 section 3.2.7), and accepting one
+ * rewrites DTSTART/DTEND on our calendar and re-invites every guest. The proposal itself is
+ * just a message: its UID, its ORGANIZER and its ATTENDEE list are all written by whoever
+ * sent it, and a UID is not a secret - it travels in the invitation to every guest, and in
+ * every reply. So nothing in the attachment can decide this. Both questions are asked of the
+ * copy already on our calendar:
+ *
+ * - do we organize this meeting, since only the organizer may revise one (section 2.1.4), and
+ * - is the sender on its guest list, since only an attendee may counter (section 3.2.7).
+ *
+ * A meeting whose ORGANIZER the server has rewritten to a shared calendar's own address -
+ * Google does this for events on a `...@group.calendar.google.com` calendar - reads as
+ * somebody else's and is refused. That is a button not offered, not a meeting moved wrongly.
+ *
+ * @param ics - Our synced copy of the event, never the emailed attachment.
+ * @param senderEmail - The From address of the message carrying the COUNTER.
+ * @param addresses - The account's address and its aliases.
+ */
+export function counterProposalProblem({
+  ics,
+  senderEmail,
+  addresses,
+}: {
+  ics: string;
+  senderEmail: string | null;
+  addresses: string[];
+}): CounterProposalProblem | null {
+  let event: ICAL.Event;
+  try {
+    event = CalendarUtils.parseICSString(ics).event;
+  } catch (e) {
+    return 'not-our-meeting';
+  }
+
+  const organizer = event.organizer ? CalendarUtils.emailFromParticipantURI(event.organizer) : null;
+  if (!organizer || !addresses.some((a) => Utils.emailIsEquivalent(a, organizer))) {
+    return 'not-our-meeting';
+  }
+
+  if (!senderEmail) {
+    return 'not-from-a-guest';
+  }
+  const guests = CalendarUtils.cleanParticipants(event)
+    .map((p) => p.email)
+    .filter((email): email is string => !!email);
+  if (!guests.some((guest) => Utils.emailIsEquivalent(guest, senderEmail))) {
+    return 'not-from-a-guest';
+  }
+
+  return null;
 }
 
 /**
