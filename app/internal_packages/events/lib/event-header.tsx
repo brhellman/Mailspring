@@ -27,7 +27,9 @@ import {
   resolveRSVPTarget,
   resolveDefaultCalendar,
   conflictCalendarIds,
+  counterProposalProblem,
   mayBeAddedToCalendar,
+  CounterProposalProblem,
   RSVPTargetResolution,
 } from './rsvp-target';
 import { findConflicts, CalendarConflict } from '../../../src/calendar-conflicts';
@@ -99,6 +101,8 @@ interface EventHeaderState {
   addTo?: Calendar;
   /** The calendars that could receive it, so the choice can be changed before answering. */
   addToChoices?: Calendar[];
+  /** Why an arriving counter-proposal may not be applied, when it may not be. */
+  counterProblem?: CounterProposalProblem;
   /** The slot we last counter-proposed, kept so the row can confirm what was sent. */
   proposed?: { start: number; end: number };
   inflight?: ICSParticipantStatus;
@@ -127,6 +131,7 @@ export class EventHeader extends React.Component<EventHeaderProps, EventHeaderSt
     conflicts: undefined,
     addTo: undefined,
     addToChoices: undefined,
+    counterProblem: undefined,
     proposed: undefined,
     inflight: undefined,
   };
@@ -260,12 +265,23 @@ export class EventHeader extends React.Component<EventHeaderProps, EventHeaderSt
         excludeIcsuid: event.uid,
       });
 
+      // Whether a counter-proposal may be acted on is decided by our own copy of the
+      // meeting, never by the attachment - see counterProposalProblem.
+      const counterProblem =
+        normalizedMethod === 'counter' && rsvp.target
+          ? counterProposalProblem({
+              ics: rsvp.target.event.ics,
+              senderEmail: message.from[0] ? message.from[0].email : null,
+              addresses,
+            })
+          : undefined;
+
       // Prefer the synced copy over the emailed attachment - the attachment goes stale as
       // soon as the organizer changes anything.
       const display =
         normalizedMethod === 'counter' ? null : rsvp.target ? rsvp.target.event : calEvents[0];
       if (!display) {
-        this.setState({ rsvp, conflicts, addTo, addToChoices });
+        this.setState({ rsvp, conflicts, addTo, addToChoices, counterProblem });
         return;
       }
       try {
@@ -276,10 +292,11 @@ export class EventHeader extends React.Component<EventHeaderProps, EventHeaderSt
           conflicts,
           addTo,
           addToChoices,
+          counterProblem,
         });
       } catch (e) {
         console.warn(`EventHeader: Could not parse ICS data from calendar event: ${e.message}`);
-        this.setState({ rsvp, conflicts, addTo, addToChoices });
+        this.setState({ rsvp, conflicts, addTo, addToChoices, counterProblem });
       }
     });
   }
@@ -430,19 +447,29 @@ export class EventHeader extends React.Component<EventHeaderProps, EventHeaderSt
   is the only place it exists; our own copy still has the original.
   */
   _renderCounterProposal() {
-    const { rsvp } = this.state;
+    const { rsvp, counterProblem } = this.state;
     const from = this.props.message.from[0];
     const proposer = from ? from.displayName() : localized('An attendee');
 
-    if (!rsvp || !rsvp.target) {
+    const refusal =
+      !rsvp || !rsvp.target
+        ? localized("This event isn't on a calendar you can edit, so it can't be moved here.")
+        : counterProblem === 'not-our-meeting'
+          ? localized("You don't organize this event, so only its organizer can move it.")
+          : counterProblem === 'not-from-a-guest'
+            ? localized(
+                '%@ is not a guest on this event, so it cannot be moved from here.',
+                proposer
+              )
+            : null;
+
+    if (refusal) {
       return (
         <div className="event-actions event-counter">
           <div className="event-counter-notice">
             {localized('%@ proposed this new time.', proposer)}
           </div>
-          <div className="event-rsvp-destination event-rsvp-email-only">
-            {localized("This event isn't on a calendar you can edit, so it can't be moved here.")}
-          </div>
+          <div className="event-rsvp-destination event-rsvp-email-only">{refusal}</div>
         </div>
       );
     }
@@ -465,8 +492,8 @@ export class EventHeader extends React.Component<EventHeaderProps, EventHeaderSt
   }
 
   _onAcceptProposedTime = () => {
-    const { rsvp, icsEvent } = this.state;
-    if (!rsvp || !rsvp.target) return;
+    const { rsvp, icsEvent, counterProblem } = this.state;
+    if (!rsvp || !rsvp.target || counterProblem) return;
 
     const start = Math.round(icsEvent.startDate.toJSDate().getTime() / 1000);
     const end = Math.round(icsEvent.endDate.toJSDate().getTime() / 1000);
