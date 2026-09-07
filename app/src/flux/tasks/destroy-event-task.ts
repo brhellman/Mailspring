@@ -37,6 +37,6 @@ export class DestroyEventTask extends Task {
 
   /** Re-read the calendar once the server has the deletion. See SyncbackEventTask.onSuccess. */
   async onSuccess() {
-    Actions.syncCalendarNow();
+    Actions.syncCalendarNow(this.accountId);
   }
 }
