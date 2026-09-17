@@ -10,17 +10,6 @@ type ICALTimezone = InstanceType<ICAL['Timezone']>;
 
 let ICAL: ICAL = null;
 
-/**
- * The current instant as a UTC DATE-TIME.
- *
- * DTSTAMP, and any other property RFC 5545 section 3.8.7.2 requires in UTC, must serialise
- * with a trailing Z. ICAL.Time.now() builds a floating local time, which a recipient in
- * another zone resolves to the wrong instant.
- */
-function nowUTC(ical: ICAL) {
-  return ical.Time.fromJSDate(new Date(), true);
-}
-
 function getICAL(): ICAL {
   if (!ICAL) {
     ICAL = require('ical.js');
