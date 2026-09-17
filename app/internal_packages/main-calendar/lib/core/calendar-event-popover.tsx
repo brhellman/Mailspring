@@ -113,7 +113,7 @@ interface CalendarEventPopoverState {
   /** True once repeat/timezone were read from the event, not left at their defaults. */
   recurrenceLoaded: boolean;
   /** The repeat value the event arrived with, so a save can tell whether the user changed it. */
-  repeatOriginal: RepeatOption;
+  originalRepeat: RepeatOption;
   title: string;
   // New fields for enhanced editing
   allDay: boolean;
@@ -153,7 +153,7 @@ export class CalendarEventPopover extends React.Component<
       title,
       editing: !!this.props.isNewEvent || !!this.props.startEditing,
       recurrenceLoaded: !!this.props.isNewEvent,
-      repeatOriginal: 'none',
+      originalRepeat: 'none',
       attendees,
       // Initialize new fields with defaults
       allDay: isAllDay || false,
