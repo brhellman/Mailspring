@@ -1211,7 +1211,7 @@ export class MailspringCalendar extends React.Component<
             <ResizableRegion
               className="calendar-source-list"
               initialWidth={200}
-              minWidth={160}
+              minWidth={200}
               maxWidth={300}
               handle={ResizableRegion.Handle.Right}
               style={{ flexDirection: 'column' }}
