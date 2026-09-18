@@ -1,4 +1,5 @@
 import { AccountStore, Calendar, RegExpUtils, Utils } from 'mailspring-exports';
+import { findOneIana } from 'windows-iana';
 
 type ICAL = typeof import('ical.js').default;
 type ICALComponent = InstanceType<ICAL['Component']>;
@@ -63,10 +64,11 @@ const WHOLE_HISTORY = new Date(Date.UTC(1601, 0, 1));
  * Registers a VCALENDAR's VTIMEZONEs with the ICAL.js TimezoneService, so `toJSDate()` on a
  * TZID-relative time gives the instant it names, and describes any zone a VEVENT refers to
  * without one. RFC 7809 lets a server omit the VTIMEZONE for an IANA zone, and ical.js has no
- * zone data of its own, so such a value would otherwise read as floating local time. The registry
- * is process-wide, so the synthesised zone describes the zone's whole history: whichever file names
- * it first, a later file's older dates read right. A file that carries the VTIMEZONE replaces it.
- * An identifier moment-timezone does not know is left alone.
+ * zone data of its own, so such a value would otherwise read as floating local time. The
+ * synthesised zone describes the rules in force at the property's own date, and the registry is
+ * process-wide: the first file to name a zone without its VTIMEZONE fixes those rules for every
+ * later file that also omits it. A file that carries the VTIMEZONE replaces it. An identifier
+ * no zone can be found for is left alone.
  */
 function registerTimezones(vcalendar: ICALComponent): void {
   for (const vtz of vcalendar.getAllSubcomponents('vtimezone')) {
@@ -80,7 +82,10 @@ function registerTimezones(vcalendar: ICALComponent): void {
     for (const prop of vevent.getAllProperties()) {
       const tzid = prop.getParameter('tzid');
       if (typeof tzid !== 'string' || ICAL.TimezoneService.has(tzid)) continue;
-      const vtimezone = createVTIMEZONEString(tzid, WHOLE_HISTORY);
+      // Read the date off the raw value: hydrating it here would cache it as floating.
+      const [, y, m, d] = /^(\d{4})(\d{2})(\d{2})/.exec(String(prop.toJSON()[3])) || [];
+      const at = y ? new Date(Date.UTC(+y, +m - 1, +d)) : new Date();
+      const vtimezone = createVTIMEZONEString(tzid, at);
       if (!vtimezone) continue;
       ICAL.TimezoneService.register(
         new ICAL.Component(
@@ -94,96 +99,57 @@ function registerTimezones(vcalendar: ICALComponent): void {
 let momentDataHorizonYear: number | null = null;
 
 /**
- * The last year moment-timezone's data reaches. It runs every rule-based zone out to the same
- * final year (2499 in tzdata 2026c) and then holds the last offset, so a transition in that year
- * means the data stopped, not the zone.
- */
-function dataHorizonYear(momentTz): number {
-  if (momentDataHorizonYear === null) {
-    momentDataHorizonYear = Math.max(
-      ...momentTz.tz.names().map((name: string) => {
-        const untils = momentTz.tz.zone(name).untils.filter(Number.isFinite);
-        return untils.length ? new Date(untils[untils.length - 1]).getUTCFullYear() : 0;
-      })
-    );
-  }
-  return momentDataHorizonYear;
-}
-
-/**
- * The IANA zone whose rules a TZID describes, or null if none can be identified.
+ * The IANA zone whose rules a TZID describes, or null if we can't identify it.
  *
  * A TZID is an opaque name (RFC 5545 section 3.2.19), and Outlook and Exchange write Windows
- * zone names: "Central Standard Time" rather than "America/Chicago". moment-timezone has no
- * data for those, and `moment().tz('Central Standard Time')` logs an error and hands back a
- * moment in the machine's own zone, so an event authored in Outlook and edited here would be
- * rewritten at the wrong wall clock by the difference between the two. windows-iana carries
- * the CLDR mapping that closes it. What it does not carry are the display names Outlook also
- * writes, "(UTC-06:00) Central Time (US & Canada)" and "Customized Time Zone" among them, which
- * fall through to null.
+ * zone names - "Central Standard Time" rather than "America/Chicago". moment-timezone has no
+ * data for those: `moment().tz('Central Standard Time')` logs an error and hands back a
+ * moment in *the machine's own zone*, so an event authored in Outlook and edited here would
+ * be silently shifted by the difference between the two. windows-iana carries the CLDR
+ * mapping that closes it.
  *
- * UTC and its aliases are refused as well, so the writers take their UTC path: a trailing Z is the
- * form RFC 5545 section 3.3.5 gives UTC, and needs no VTIMEZONE. A machine whose moment.tz.guess()
- * is 'UTC' reaches this.
+ * The original TZID is never rewritten, only resolved for the purpose of computing offsets:
+ * an Exchange server understands its own names, and RFC 5545 asks only that whatever name is
+ * used be defined by a VTIMEZONE in the same object.
  */
 export function resolveIanaZone(tzId: string): string | null {
   if (!tzId) return null;
-  if (['utc', 'gmt', 'etc/utc', 'etc/gmt', 'z'].includes(tzId.trim().toLowerCase())) return null;
   const momentTz = require('moment-timezone');
   if (momentTz.tz.zone(tzId)) return tzId;
   const mapped = findOneIana(tzId);
   return mapped && momentTz.tz.zone(mapped) ? mapped : null;
 }
 
-// "2,3,4,5,6,7,8" for 2: the days of a week-long BYMONTHDAY window starting on each day.
-const WEEK_FROM = Array.from({ length: 29 }, (_, first) =>
-  Array.from({ length: 7 }, (__, k) => first + k).join(',')
-);
-const vtimezoneCache = new Map<string, string>();
-
 /**
- * Builds a VTIMEZONE describing an IANA zone's offset rules.
+ * Builds a VTIMEZONE component describing an IANA timezone's actual offset rules.
  *
  * RFC 5545 section 3.2.19 requires a VTIMEZONE for every TZID an object references, and
- * section 3.6.5 makes it the authority for resolving those times. Servers with their own zone
- * database resolve by TZID name and ignore the body, but ical.js, and every recipient reading
- * the object directly, compute from what is written here: a body claiming one fixed offset puts
- * every occurrence on the other side of a DST transition an hour out.
+ * section 3.6.5 defines it as the authority for resolving those times. Servers that hold
+ * their own zone database resolve by TZID name and ignore the body, but the ones that do
+ * not - and every recipient reading the file directly - compute from what is written here,
+ * so a body claiming a single fixed offset puts every event on the other side of a DST
+ * transition an hour out.
  *
- * Every offset change moment-timezone knows from `referenceDate` on is written, so a time on or
- * after it reads exactly as moment reads it. Consecutive years whose change falls on the same
- * yearly rule share one RRULE: the nth or last weekday of a month (the US, the EU), a weekday on
- * or after a date (America/Santiago's Sunday on or after 2 September), or a fixed date. A rule
- * that stops carries UNTIL at its last change, and the rule the data runs out on carries none.
- * A change no rule covers is an RDATE: Morocco's Ramadan suspensions, Asia/Tehran's 21 March in
- * leap years, a final year whose date drifted (America/Asuncion's 24 March 2024).
+ * The rules are read out of moment-timezone rather than invented: the two most recent
+ * transitions bracketing `referenceDate` give the STANDARD and DAYLIGHT offsets, and the
+ * yearly RRULEs are derived from the transition dates themselves. A zone that does not
+ * observe DST yields a single STANDARD component, which is correct rather than degraded.
  *
- * The rules in force at `referenceDate` start in 1970, the anchor vzic and the ical-expander zone
- * database use, rather than at their real first year: ical.js matches a date before the earliest
- * DTSTART to no rule and reads its wall clock as UTC, and a created event's component should look
- * like everyone else's two-rule zone. An earlier `referenceDate` anchors in the year before it, so
- * the component can describe a zone's whole history.
- *
- * @param tzId - Timezone identifier, IANA or a Windows name Outlook wrote (see resolveIanaZone).
- *   It is reproduced verbatim as the component's TZID: an Exchange server understands its own
- *   names, and RFC 5545 asks only that whatever name is used be defined in the same object.
- * @param referenceDate - The first instant the component must read correctly
+ * @param tzId - Timezone identifier, IANA or a Windows name Outlook wrote (see
+ *   resolveIanaZone). It is reproduced verbatim as the component's TZID.
+ * @param referenceDate - The era whose rules are described; zones change them over time
  * @returns A VTIMEZONE ICS string (no surrounding VCALENDAR wrapper), or null when the
- *   identifier names no zone we can describe; inventing rules for it would be worse than
+ *   identifier names no zone we can describe - inventing rules for it would be worse than
  *   leaving the calendar's own component alone.
  */
 export function createVTIMEZONEString(tzId: string, referenceDate: Date): string | null {
   const momentTz = require('moment-timezone');
   const zoneId = resolveIanaZone(tzId);
   if (!zoneId) return null;
-  const WEEKDAYS = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
+  const zone = momentTz.tz.zone(zoneId);
 
-  // Pre-1900 dates read the zone's LMT offset, which has seconds in it: America/Chicago is
-  // -5:50:36. ical.js reads whole minutes only.
-  const wholeMinutes = (utcOffsetMin: number) =>
-    Math.sign(utcOffsetMin) * Math.round(Math.abs(utcOffsetMin));
   const formatOffset = (utcOffsetMin: number) => {
-    const abs = Math.abs(wholeMinutes(utcOffsetMin));
+    const abs = Math.abs(utcOffsetMin);
     const sign = utcOffsetMin >= 0 ? '+' : '-';
     return `${sign}${String(Math.floor(abs / 60)).padStart(2, '0')}${String(abs % 60).padStart(
       2,
@@ -191,204 +157,78 @@ export function createVTIMEZONEString(tzId: string, referenceDate: Date): string
     )}`;
   };
 
-  // moment's `untils` are the instants each offset stops applying: segment i runs from
-  // untils[i - 1] to untils[i] at offsets[i], minutes west of UTC, and the last entry is Infinity.
-  // A change of abbreviation alone is folded into the segment before it, since only offsets are
-  // described here: America/Ciudad_Juarez renamed -06:00 from MDT to CST in October 2022 in the
-  // middle of a DST year, and read as a transition that ends the year early.
-  const zone = momentTz.tz.zone(zoneId);
-  const untils: number[] = [];
-  const offsets: number[] = [];
-  const names: string[] = [];
-  zone.untils.forEach((until: number, i: number) => {
-    if (offsets.length && offsets[offsets.length - 1] === zone.offsets[i]) {
-      untils[untils.length - 1] = until;
-      names[names.length - 1] = zone.abbrs[i];
-    } else {
-      untils.push(until);
-      offsets.push(zone.offsets[i]);
-      names.push(zone.abbrs[i]);
-    }
-  });
-
-  const YEAR_MS = 366 * 24 * 60 * 60 * 1000;
-  const horizon = dataHorizonYear(momentTz);
-  const anchorYear = Math.min(1970, referenceDate.getUTCFullYear() - 1);
-
-  // The change into segment i. Section 3.6.5: DTSTART is the wall clock at which it takes effect,
-  // read in the offset being left (TZOFFSETFROM).
-  const change = (i: number) => {
-    const offsetFrom = -offsets[i - 1];
-    // Shifted by hand: moment's utcOffset(n) reads |n| < 16 as hours, which Europe/Paris's
-    // +00:09:21 LMT is not.
-    const local = momentTz.utc(untils[i - 1] + offsetFrom * 60 * 1000);
+  // A subcomponent needs the offset before the transition as well as after it, so each
+  // sample carries both. DTSTART is the local wall-clock instant the rule takes effect,
+  // which RFC 5545 section 3.6.5 requires to be a floating time.
+  const sample = (at: Date, offsetBeforeMin: number) => {
+    const m = momentTz(at).tz(zoneId);
     return {
-      i,
-      at: untils[i - 1],
-      local,
-      year: local.year(),
-      month: local.month() + 1,
-      day: local.date(),
-      weekday: local.day(),
-      time: local.format('HHmmss'),
-      offsetFrom,
-      offsetTo: -offsets[i],
-      name: names[i],
-      // Half of a DST year, which is shorter than a year, at the greater of the two offsets.
-      daylight: -offsets[i] > offsetFrom && untils[i] - untils[i - 1] <= YEAR_MS,
+      dtstart: m.format('YYYYMMDD[T]HHmmss'),
+      month: m.month() + 1,
+      // The nth weekday of the month, which is how these rules are actually written; a
+      // fixed date would drift a day every year. The EU writes its transitions as the *last*
+      // Sunday of the month, which is the fifth in some years and the fourth in others, so a
+      // positive ordinal would stop matching - BYDAY=-1SU is the rule those zones mean.
+      nth: m.clone().add(7, 'days').month() !== m.month() ? -1 : Math.ceil(m.date() / 7),
+      weekday: ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'][m.day()],
+      offsetTo: m.utcOffset(),
+      offsetFrom: offsetBeforeMin,
+      name: m.zoneAbbr(),
     };
   };
-  type Change = ReturnType<typeof change>;
 
-  // The yearly rules a change falls on, most conventional first, as RRULE parts after BYMONTH.
-  const rulesFor = (c: Change) => {
-    const daysInMonth = new Date(Date.UTC(c.year, c.month, 0)).getUTCDate();
-    const shortestMonth = c.month === 2 ? 28 : daysInMonth;
-    const wd = WEEKDAYS[c.weekday];
-    const rules: string[] = [];
-    if (c.day <= 28) rules.push(`BYDAY=${Math.ceil(c.day / 7)}${wd}`);
-    if (c.day + 7 > daysInMonth) rules.push(`BYDAY=-1${wd}`);
-    for (let first = Math.max(1, c.day - 6); first <= c.day; first++) {
-      if (first + 6 > shortestMonth) break;
-      rules.push(`BYMONTHDAY=${WEEK_FROM[first]};BYDAY=${wd}`);
-    }
-    rules.push(`BYMONTHDAY=${c.day}`);
-    return rules;
-  };
+  const block = (kind: 'STANDARD' | 'DAYLIGHT', t: ReturnType<typeof sample>) => [
+    `BEGIN:${kind}`,
+    `DTSTART:${t.dtstart}`,
+    `RRULE:FREQ=YEARLY;BYMONTH=${t.month};BYDAY=${t.nth}${t.weekday}`,
+    `TZOFFSETFROM:${formatOffset(t.offsetFrom)}`,
+    `TZOFFSETTO:${formatOffset(t.offsetTo)}`,
+    `TZNAME:${t.name}`,
+    `END:${kind}`,
+  ];
 
-  // The day a rule gives in another year, for anchoring a rule earlier than its first change.
-  const ruleDay = (year: number, month: number, rule: string) => {
-    const first = momentTz.utc([year, month - 1, 1]);
-    const byDay = /BYDAY=(-?\d)?(\w\w)/.exec(rule);
-    const byMonthDay = /BYMONTHDAY=(\d+)/.exec(rule);
-    if (!byDay) return first.date(+byMonthDay[1]);
-    const weekday = WEEKDAYS.indexOf(byDay[2]);
-    if (byDay[1] === '-1') {
-      const last = first.clone().endOf('month').startOf('day');
-      return last.subtract((last.day() - weekday + 7) % 7, 'days');
-    }
-    const from = byMonthDay ? +byMonthDay[1] : 7 * (+byDay[1] - 1) + 1;
-    const start = first.date(from);
-    return start.add((weekday - start.day() + 7) % 7, 'days');
-  };
-
-  // Section 3.6.5: an RRULE's UNTIL in a VTIMEZONE is always UTC.
-  const utc = (at: number) =>
-    new Date(at)
-      .toISOString()
-      .replace(/[-:]/g, '')
-      .replace(/\.\d{3}/, '');
-
-  // Runs of consecutive years whose change has the same offsets, wall clock and rule.
-  type Run = { changes: Change[]; rules: string[] };
-  const runsFrom = (firstChange: number) => {
-    const runs: Run[] = [];
-    const open = new Map<string, Run>();
-    for (let i = firstChange; i < untils.length; i++) {
-      const c = change(i);
-      // The data stops rather than the zone, and the last change sits on the open-ended segment.
-      if (c.year >= horizon) break;
-      const key = [c.offsetFrom, c.offsetTo, c.name, c.time, c.month, c.daylight].join('|');
-      const run = open.get(key);
-      const own = rulesFor(c);
-      const rules = run ? run.rules.filter((r) => own.includes(r)) : [];
-      if (run && run.changes[run.changes.length - 1].year === c.year - 1 && rules.length) {
-        run.changes.push(c);
-        run.rules = rules;
-      } else {
-        const fresh = { changes: [c], rules: own };
-        runs.push(fresh);
-        open.set(key, fresh);
-      }
-    }
-    return runs;
-  };
-  const isRule = (run: Run) => run.changes.length > 1;
-
-  const current = untils.findIndex((u) => u > referenceDate.getTime());
-  const abbrAtReference = momentTz(referenceDate).tz(zoneId).zoneAbbr();
-  // Every reference inside one segment gives the same component, save the abbreviation in force.
-  const cacheKey = [tzId, current, anchorYear, abbrAtReference].join('|');
-  if (vtimezoneCache.has(cacheKey)) return vtimezoneCache.get(cacheKey);
-
-  // A reference in the middle of a DST year anchors the rules its two halves run on; anything else
-  // starts from the offset in force at the reference.
-  const inDSTYear =
-    current >= 1 && isFinite(untils[current]) && untils[current] - untils[current - 1] <= YEAR_MS;
-  let runs = inDSTYear ? runsFrom(current) : [];
-  const anchored = runs.slice(0, 2).filter(isRule);
-  if (!anchored.length) runs = runsFrom(current + 1);
-
-  const observance = (c: Change, start: string, extra: string[]) => {
-    const kind = c.daylight ? 'DAYLIGHT' : 'STANDARD';
-    return [
-      `BEGIN:${kind}`,
-      `DTSTART:${start}`,
-      ...extra,
-      `TZOFFSETFROM:${formatOffset(c.offsetFrom)}`,
-      `TZOFFSETTO:${formatOffset(c.offsetTo)}`,
-      `TZNAME:${c.name}`,
-      `END:${kind}`,
-    ];
-  };
-  const rrule = (run: Run) => {
-    const last = run.changes[run.changes.length - 1];
-    // ical.js reads UNTIL back through the TZOFFSETFROM as written, so it is taken from that
-    // rounded offset: America/St_Johns's -3:30:52 would otherwise drop the rule's last year.
-    const untilAt = last.local.valueOf() - wholeMinutes(last.offsetFrom) * 60 * 1000;
-    const until = last.year >= horizon - 1 ? '' : `;UNTIL=${utc(untilAt)}`;
-    return `RRULE:FREQ=YEARLY;BYMONTH=${run.changes[0].month};${run.rules[0]}${until}`;
-  };
-  const stamp = (c: Change) => c.local.format('YYYYMMDD[T]HHmmss');
-
-  const head: string[][] = [];
-  if (anchored.length) {
-    for (const run of anchored) {
-      const first = run.changes[0];
-      const day = ruleDay(anchorYear, first.month, run.rules[0]).format('YYYYMMDD');
-      head.push(observance(first, `${day}T${first.time}`, [rrule(run)]));
-    }
-    // STANDARD first, as every other writer orders the pair.
-    head.sort((a, b) => (a[0] === b[0] ? 0 : a[0] === 'BEGIN:STANDARD' ? -1 : 1));
-  } else {
-    const offset = formatOffset(-offsets[current]);
-    head.push([
-      'BEGIN:STANDARD',
-      `DTSTART:${anchorYear}0101T000000`,
-      `TZOFFSETFROM:${offset}`,
-      `TZOFFSETTO:${offset}`,
-      `TZNAME:${abbrAtReference}`,
-      'END:STANDARD',
-    ]);
-  }
-
-  // A change no rule covers joins the other one-off changes between the same offsets as an RDATE.
-  // ical.js stops counting an observance's DTSTART as an onset once it has an RDATE, so the first
-  // change is listed as one too.
-  const tail: { at: number; block: string[] }[] = [];
-  const oneOffs = new Map<string, Change[]>();
-  for (const run of runs) {
-    if (anchored.includes(run)) continue;
-    const first = run.changes[0];
-    if (isRule(run)) {
-      tail.push({ at: first.at, block: observance(first, stamp(first), [rrule(run)]) });
-    } else {
-      const key = [first.offsetFrom, first.offsetTo, first.name, first.daylight].join('|');
-      oneOffs.set(key, [...(oneOffs.get(key) || []), first]);
+  // moment-timezone's `untils` are the instants each offset stops applying. The two that
+  // bracket the reference date describe the DST rules in force around it.
+  const untils: number[] = (zone && zone.untils) || [];
+  const refMs = referenceDate.getTime();
+  const idx = untils.findIndex((u) => u !== null && u > refMs);
+  const transitions: Date[] = [];
+  if (zone && idx > 0) {
+    for (const u of [untils[idx - 1], untils[idx]]) {
+      if (u !== null && isFinite(u)) transitions.push(new Date(u));
     }
   }
-  for (const group of oneOffs.values()) {
-    const rdates = group.length > 1 ? group.map((c) => `RDATE:${stamp(c)}`) : [];
-    tail.push({ at: group[0].at, block: observance(group[0], stamp(group[0]), rdates) });
-  }
-  tail.sort((a, b) => a.at - b.at);
-  const blocks = [...head, ...tail.map((t) => t.block)];
 
-  const vtimezone = ['BEGIN:VTIMEZONE', `TZID:${tzId}`, ...blocks.flat(), 'END:VTIMEZONE'].join(
-    '\r\n'
+  const samples = transitions.map((at) =>
+    // One millisecond before the transition is the offset being left behind.
+    sample(
+      at,
+      momentTz(new Date(at.getTime() - 1))
+        .tz(zoneId)
+        .utcOffset()
+    )
   );
-  vtimezoneCache.set(cacheKey, vtimezone);
-  return vtimezone;
+  const daylight = samples.find((t) => samples.some((o) => t.offsetTo > o.offsetTo));
+  const standard = samples.find((t) => t !== daylight);
+
+  const body: string[] = [];
+  if (daylight && standard) {
+    body.push(...block('STANDARD', standard), ...block('DAYLIGHT', daylight));
+  } else {
+    // No DST in this era: one STANDARD with the offset that actually applies, and no RRULE,
+    // because there is no recurring transition to describe.
+    const m = momentTz(referenceDate).tz(zoneId);
+    body.push(
+      'BEGIN:STANDARD',
+      'DTSTART:19700101T000000',
+      `TZOFFSETFROM:${formatOffset(m.utcOffset())}`,
+      `TZOFFSETTO:${formatOffset(m.utcOffset())}`,
+      `TZNAME:${m.zoneAbbr()}`,
+      'END:STANDARD'
+    );
+  }
+
+  return ['BEGIN:VTIMEZONE', `TZID:${tzId}`, ...body, 'END:VTIMEZONE'].join('\r\n');
 }
 
 export function emailFromParticipantURI(uri: string): string | null {
