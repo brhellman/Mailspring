@@ -1,6 +1,12 @@
 import crypto from 'crypto';
-import { findOneIana } from 'windows-iana';
-import { parseICSString, emailFromParticipantURI } from './calendar-utils';
+import {
+  parseICSString,
+  emailFromParticipantURI,
+  createVTIMEZONEString,
+  resolveIanaZone,
+} from './calendar-utils';
+
+export { createVTIMEZONEString };
 import { calendarDateFromUnix, shiftedDayStartUnix, calendarDaysBetween } from './calendar-date';
 
 type ICAL = typeof import('ical.js').default;
@@ -279,28 +285,6 @@ function addExdateProperty(
 }
 
 /**
- * The IANA zone whose rules a TZID describes, or null if we can't identify it.
- *
- * A TZID is an opaque name (RFC 5545 section 3.2.19), and Outlook and Exchange write Windows
- * zone names - "Central Standard Time" rather than "America/Chicago". moment-timezone has no
- * data for those: `moment().tz('Central Standard Time')` logs an error and hands back a
- * moment in *the machine's own zone*, so an event authored in Outlook and edited here would
- * be silently shifted by the difference between the two. windows-iana carries the CLDR
- * mapping that closes it.
- *
- * The original TZID is never rewritten, only resolved for the purpose of computing offsets:
- * an Exchange server understands its own names, and RFC 5545 asks only that whatever name is
- * used be defined by a VTIMEZONE in the same object.
- */
-function resolveIanaZone(tzId: string): string | null {
-  if (!tzId) return null;
-  const momentTz = require('moment-timezone');
-  if (momentTz.tz.zone(tzId)) return tzId;
-  const mapped = findOneIana(tzId);
-  return mapped && momentTz.tz.zone(mapped) ? mapped : null;
-}
-
-/**
  * Brings a VCALENDAR's VTIMEZONE components in line with the TZIDs its properties reference.
  *
  * RFC 5545 section 3.2.19 makes a TZID meaningful only by reference to a VTIMEZONE in the
@@ -344,21 +328,6 @@ function syncVTimezones(vcalendar: ICALComponent, ical: ICAL, referenceDate: Dat
         ical.parse(`BEGIN:VCALENDAR\r\nVERSION:2.0\r\n${vtimezone}\r\nEND:VCALENDAR`)
       ).getFirstSubcomponent('vtimezone')
     );
-  }
-}
-
-/**
- * Registers all VTIMEZONE subcomponents from a VCALENDAR with the ICAL.js
- * TimezoneService so that subsequent `toJSDate()` calls on TZID-relative times
- * resolve correctly. Duplicate registrations are silently ignored.
- */
-function registerTimezones(vcalendar: ICALComponent, ical: ICAL): void {
-  for (const vtz of vcalendar.getAllSubcomponents('vtimezone')) {
-    try {
-      ical.TimezoneService.register(vtz);
-    } catch (_) {
-      // Ignore duplicate registrations (same TZID registered more than once)
-    }
   }
 }
 
@@ -423,117 +392,6 @@ function validateTimestamps(start: number, end: number): void {
   if (end < start) {
     throw new Error('Invalid timestamps: end time must be after or equal to start time');
   }
-}
-
-/**
- * Builds a VTIMEZONE component describing an IANA timezone's actual offset rules.
- *
- * RFC 5545 section 3.2.19 requires a VTIMEZONE for every TZID an object references, and
- * section 3.6.5 defines it as the authority for resolving those times. Servers that hold
- * their own zone database resolve by TZID name and ignore the body, but the ones that do
- * not - and every recipient reading the file directly - compute from what is written here,
- * so a body claiming a single fixed offset puts every event on the other side of a DST
- * transition an hour out.
- *
- * The rules are read out of moment-timezone rather than invented: the two most recent
- * transitions bracketing `referenceDate` give the STANDARD and DAYLIGHT offsets, and the
- * yearly RRULEs are derived from the transition dates themselves. A zone that does not
- * observe DST yields a single STANDARD component, which is correct rather than degraded.
- *
- * @param tzId - Timezone identifier, IANA or a Windows name Outlook wrote (see
- *   resolveIanaZone). It is reproduced verbatim as the component's TZID.
- * @param referenceDate - The era whose rules are described; zones change them over time
- * @returns A VTIMEZONE ICS string (no surrounding VCALENDAR wrapper), or null when the
- *   identifier names no zone we can describe - inventing rules for it would be worse than
- *   leaving the calendar's own component alone.
- */
-export function createVTIMEZONEString(tzId: string, referenceDate: Date): string | null {
-  const momentTz = require('moment-timezone');
-  const zoneId = resolveIanaZone(tzId);
-  if (!zoneId) return null;
-  const zone = momentTz.tz.zone(zoneId);
-
-  const formatOffset = (utcOffsetMin: number) => {
-    const abs = Math.abs(utcOffsetMin);
-    const sign = utcOffsetMin >= 0 ? '+' : '-';
-    return `${sign}${String(Math.floor(abs / 60)).padStart(2, '0')}${String(abs % 60).padStart(
-      2,
-      '0'
-    )}`;
-  };
-
-  // A subcomponent needs the offset before the transition as well as after it, so each
-  // sample carries both. DTSTART is the local wall-clock instant the rule takes effect,
-  // which RFC 5545 section 3.6.5 requires to be a floating time.
-  const sample = (at: Date, offsetBeforeMin: number) => {
-    const m = momentTz(at).tz(zoneId);
-    return {
-      dtstart: m.format('YYYYMMDD[T]HHmmss'),
-      month: m.month() + 1,
-      // The nth weekday of the month, which is how these rules are actually written; a
-      // fixed date would drift a day every year. The EU writes its transitions as the *last*
-      // Sunday of the month, which is the fifth in some years and the fourth in others, so a
-      // positive ordinal would stop matching - BYDAY=-1SU is the rule those zones mean.
-      nth: m.clone().add(7, 'days').month() !== m.month() ? -1 : Math.ceil(m.date() / 7),
-      weekday: ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'][m.day()],
-      offsetTo: m.utcOffset(),
-      offsetFrom: offsetBeforeMin,
-      name: m.zoneAbbr(),
-    };
-  };
-
-  const block = (kind: 'STANDARD' | 'DAYLIGHT', t: ReturnType<typeof sample>) => [
-    `BEGIN:${kind}`,
-    `DTSTART:${t.dtstart}`,
-    `RRULE:FREQ=YEARLY;BYMONTH=${t.month};BYDAY=${t.nth}${t.weekday}`,
-    `TZOFFSETFROM:${formatOffset(t.offsetFrom)}`,
-    `TZOFFSETTO:${formatOffset(t.offsetTo)}`,
-    `TZNAME:${t.name}`,
-    `END:${kind}`,
-  ];
-
-  // moment-timezone's `untils` are the instants each offset stops applying. The two that
-  // bracket the reference date describe the DST rules in force around it.
-  const untils: number[] = (zone && zone.untils) || [];
-  const refMs = referenceDate.getTime();
-  const idx = untils.findIndex((u) => u !== null && u > refMs);
-  const transitions: Date[] = [];
-  if (zone && idx > 0) {
-    for (const u of [untils[idx - 1], untils[idx]]) {
-      if (u !== null && isFinite(u)) transitions.push(new Date(u));
-    }
-  }
-
-  const samples = transitions.map((at) =>
-    // One millisecond before the transition is the offset being left behind.
-    sample(
-      at,
-      momentTz(new Date(at.getTime() - 1))
-        .tz(zoneId)
-        .utcOffset()
-    )
-  );
-  const daylight = samples.find((t) => samples.some((o) => t.offsetTo > o.offsetTo));
-  const standard = samples.find((t) => t !== daylight);
-
-  const body: string[] = [];
-  if (daylight && standard) {
-    body.push(...block('STANDARD', standard), ...block('DAYLIGHT', daylight));
-  } else {
-    // No DST in this era: one STANDARD with the offset that actually applies, and no RRULE,
-    // because there is no recurring transition to describe.
-    const m = momentTz(referenceDate).tz(zoneId);
-    body.push(
-      'BEGIN:STANDARD',
-      'DTSTART:19700101T000000',
-      `TZOFFSETFROM:${formatOffset(m.utcOffset())}`,
-      `TZOFFSETTO:${formatOffset(m.utcOffset())}`,
-      `TZNAME:${m.zoneAbbr()}`,
-      'END:STANDARD'
-    );
-  }
-
-  return ['BEGIN:VTIMEZONE', `TZID:${tzId}`, ...body, 'END:VTIMEZONE'].join('\r\n');
 }
 
 /**
