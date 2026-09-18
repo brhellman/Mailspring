@@ -25,6 +25,7 @@
     flex: 1 1 auto;
     min-height: 0;
     overflow-y: auto;
+    overscroll-behavior: contain;
   }
 
   /*
@@ -60,29 +61,6 @@
       box-shadow: 0 0 0 2px rgb(from @accent-primary r g b / 40%);
       outline: none;
     }
-  }
-
-  // TabGroupRegion renders a plain div around the whole editor, so the column
-  // layout has to pass through it for the body to scroll and the footer to stay put.
-  .popover-form {
-    display: flex;
-    flex-direction: column;
-    flex: 1 1 auto;
-    min-height: 0;
-  }
-
-  /*
-  The card's one scrolling region.
-
-  min-height:0 is the load-bearing half: a flex child defaults to min-height:auto, which
-  refuses to shrink below its content, so the box overflowed its own max-height and pushed
-  the Save row off the bottom of the screen instead of scrolling.
-  */
-  .popover-body {
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow-y: auto;
-    overscroll-behavior: contain;
   }
 
   // ============================================
