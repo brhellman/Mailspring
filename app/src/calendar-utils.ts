@@ -70,6 +70,9 @@ export function parseICSString(ics: string) {
  */
 function registerTimezones(vcalendar: ICALComponent): void {
   for (const vtz of vcalendar.getAllSubcomponents('vtimezone')) {
+    // The registry is process-wide and ical.js seeds these three names with UTC itself, so a file
+    // redefining one would move every time read through that name for the rest of the session.
+    if (['UTC', 'GMT', 'Z'].includes(String(vtz.getFirstPropertyValue('tzid')))) continue;
     ICAL.TimezoneService.register(vtz);
   }
 
