@@ -1,4 +1,5 @@
 import { AccountStore, RegExpUtils } from 'mailspring-exports';
+import { findOneIana } from 'windows-iana';
 
 type ICAL = typeof import('ical.js').default;
 type ICALComponent = InstanceType<ICAL['Component']>;
@@ -72,20 +73,18 @@ function registerTimezones(vcalendar: ICALComponent): void {
     ICAL.TimezoneService.register(vtz);
   }
 
-  const momentTz = require('moment-timezone');
   for (const vevent of vcalendar.getAllSubcomponents('vevent')) {
     for (const prop of vevent.getAllProperties()) {
       const tzid = prop.getParameter('tzid');
       if (typeof tzid !== 'string' || ICAL.TimezoneService.has(tzid)) continue;
-      if (!momentTz.tz.zone(tzid)) continue;
       // Read the date off the raw value: hydrating it here would cache it as floating.
       const [, y, m, d] = /^(\d{4})(\d{2})(\d{2})/.exec(String(prop.toJSON()[3])) || [];
       const at = y ? new Date(Date.UTC(+y, +m - 1, +d)) : new Date();
+      const vtimezone = createVTIMEZONEString(tzid, at);
+      if (!vtimezone) continue;
       ICAL.TimezoneService.register(
         new ICAL.Component(
-          ICAL.parse(
-            `BEGIN:VCALENDAR\r\nVERSION:2.0\r\n${createVTIMEZONEString(tzid, at)}\r\nEND:VCALENDAR`
-          )
+          ICAL.parse(`BEGIN:VCALENDAR\r\nVERSION:2.0\r\n${vtimezone}\r\nEND:VCALENDAR`)
         ).getFirstSubcomponent('vtimezone')
       );
     }
@@ -109,6 +108,31 @@ function dataHorizonYear(momentTz): number {
     );
   }
   return momentDataHorizonYear;
+}
+
+/**
+ * The IANA zone whose rules a TZID describes, or null if none can be identified.
+ *
+ * A TZID is an opaque name (RFC 5545 section 3.2.19), and Outlook and Exchange write Windows
+ * zone names: "Central Standard Time" rather than "America/Chicago". moment-timezone has no
+ * data for those, and `moment().tz('Central Standard Time')` logs an error and hands back a
+ * moment in the machine's own zone, so an event authored in Outlook and edited here would be
+ * rewritten at the wrong wall clock by the difference between the two. windows-iana carries
+ * the CLDR mapping that closes it. What it does not carry are the display names Outlook also
+ * writes, "(UTC-06:00) Central Time (US & Canada)" and "Customized Time Zone" among them, which
+ * fall through to null.
+ *
+ * UTC and its aliases are refused as well, so the writers take their UTC path: a trailing Z is the
+ * form RFC 5545 section 3.3.5 gives UTC, and needs no VTIMEZONE. A machine whose moment.tz.guess()
+ * is 'UTC' reaches this.
+ */
+export function resolveIanaZone(tzId: string): string | null {
+  if (!tzId) return null;
+  if (['utc', 'gmt', 'etc/utc', 'etc/gmt', 'z'].includes(tzId.trim().toLowerCase())) return null;
+  const momentTz = require('moment-timezone');
+  if (momentTz.tz.zone(tzId)) return tzId;
+  const mapped = findOneIana(tzId);
+  return mapped && momentTz.tz.zone(mapped) ? mapped : null;
 }
 
 /**
@@ -145,12 +169,18 @@ function dataHorizonYear(momentTz): number {
  * Those read an hour out for part of the year; vzic writes them as several blocks with explicit
  * RDATEs.
  *
- * @param tzId - IANA timezone identifier (e.g. 'America/Chicago'), reproduced verbatim as the TZID
+ * @param tzId - Timezone identifier, IANA or a Windows name Outlook wrote (see resolveIanaZone).
+ *   It is reproduced verbatim as the component's TZID: an Exchange server understands its own
+ *   names, and RFC 5545 asks only that whatever name is used be defined in the same object.
  * @param referenceDate - The era whose rules are described; zones change theirs over time
- * @returns A VTIMEZONE ICS string (no surrounding VCALENDAR wrapper)
+ * @returns A VTIMEZONE ICS string (no surrounding VCALENDAR wrapper), or null when the
+ *   identifier names no zone we can describe; inventing rules for it would be worse than
+ *   leaving the calendar's own component alone.
  */
-export function createVTIMEZONEString(tzId: string, referenceDate: Date): string {
+export function createVTIMEZONEString(tzId: string, referenceDate: Date): string | null {
   const momentTz = require('moment-timezone');
+  const zoneId = resolveIanaZone(tzId);
+  if (!zoneId) return null;
 
   const formatOffset = (utcOffsetMin: number) => {
     // Pre-1900 dates read the zone's LMT offset, which has seconds in it: America/Chicago is
@@ -178,7 +208,7 @@ export function createVTIMEZONEString(tzId: string, referenceDate: Date): string
   // A change of abbreviation alone is folded into the segment before it, since only offsets are
   // described here: America/Ciudad_Juarez renamed -06:00 from MDT to CST in October 2022 in the
   // middle of a DST year, and read as a transition that ends the year early.
-  const zone = momentTz.tz.zone(tzId);
+  const zone = momentTz.tz.zone(zoneId);
   const untils: number[] = [];
   const offsets: number[] = [];
   const names: string[] = [];
@@ -285,7 +315,7 @@ export function createVTIMEZONEString(tzId: string, referenceDate: Date): string
   } else {
     // No DST in this era: one STANDARD at the offset in force, and no RRULE because there is no
     // recurring transition to describe.
-    const m = momentTz(referenceDate).tz(tzId);
+    const m = momentTz(referenceDate).tz(zoneId);
     body.push(
       'BEGIN:STANDARD',
       'DTSTART:19700101T000000',
