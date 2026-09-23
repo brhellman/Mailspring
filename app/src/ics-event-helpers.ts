@@ -295,9 +295,9 @@ function addExdateProperty(
  *
  * Zones the calendar still refers to are kept as the server wrote them; a server's own
  * VTIMEZONE describes its rules better than one we synthesise. Only a referenced zone with
- * no component at all gets one, and only when moment-timezone recognises the identifier -
- * an unrecognised TZID (a Windows zone name, a private X- identifier) is left exactly as it
- * arrived rather than described wrongly.
+ * no component at all gets one, and only when resolveIanaZone identifies the zone - an Outlook
+ * display name or a private X- identifier is left exactly as it arrived rather than described
+ * wrongly.
  */
 function syncVTimezones(vcalendar: ICALComponent, ical: ICAL, referenceDate: Date): void {
   const referenced = new Set<string>();
@@ -420,9 +420,8 @@ export function createICSString(options: CreateEventOptions): string {
   // Set summary (title)
   event.summary = options.summary;
 
-  // A zone we cannot identify can't be used to derive wall-clock components: moment would
-  // quietly substitute the machine's own zone and write the wrong time. Such an event falls
-  // through to the UTC path below, which is unambiguous.
+  // moment substitutes the machine's zone for a name it has no data for, so an unknown zone
+  // takes the UTC path below instead.
   const createZone = options.timezone ? resolveIanaZone(options.timezone) : null;
 
   if (!isAllDay && createZone) {
@@ -601,8 +600,8 @@ export function updateEventTimes(ics: string, options: UpdateTimesOptions): stri
     throw new Error('Invalid ICS: no VEVENT component found');
   }
 
-  // As in createICSString: an unidentifiable zone would have moment silently substitute the
-  // machine's own, so those events are retimed in UTC rather than at the wrong wall clock.
+  // An unknown zone retimes through the zone the event's DTSTART carries, which keeps an Outlook
+  // "Customized Time Zone" and its wall clock.
   const updateZone = options.timezone ? resolveIanaZone(options.timezone) : null;
 
   if (!isAllDay && updateZone) {
