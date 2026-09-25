@@ -3,6 +3,7 @@ import * as Attributes from '../attributes';
 import { Event } from '../models/event';
 import { AttributeValues } from '../models/model';
 import { localized } from '../../intl';
+import * as Actions from '../actions';
 
 export class DestroyEventTask extends Task {
   static attributes = {
@@ -32,5 +33,10 @@ export class DestroyEventTask extends Task {
       return localized('Deleting event...');
     }
     return localized('Deleting %@ events...', this.events.length);
+  }
+
+  /** Re-read the calendar once the server has the deletion. See SyncbackEventTask.onSuccess. */
+  async onSuccess() {
+    Actions.syncCalendarNow(this.accountId);
   }
 }

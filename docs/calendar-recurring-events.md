@@ -151,7 +151,10 @@ When an event is dragged/resized, `modifyEventWithRecurringSupport()` in `recurr
    - Removes `RRULE`, `RDATE`, `EXDATE` (exception is a single instance)
    - Adds `RECURRENCE-ID` pointing to the original occurrence start
    - Updates `DTSTART`/`DTEND` to the new times
-   - Increments `SEQUENCE`; updates `DTSTAMP`
+   - Updates `DTSTAMP`. `SEQUENCE` is left alone: one save runs several helpers, so
+     advancing it in each made a single revision jump by three. The caller that assembles
+     the change calls `bumpEventSequence(ics, recurrenceId)` once instead, which advances
+     the exception rather than the master — the rest of the series has not changed.
 4. Adds the exception VEVENT directly to the existing master VCALENDAR (`masterRoot.addSubcomponent(exceptionVevent)`).
 5. Returns `{ masterIcs, recurrenceId }` — the updated master VCALENDAR now contains both VEVENTs.
 

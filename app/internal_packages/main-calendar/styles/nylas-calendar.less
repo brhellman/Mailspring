@@ -169,6 +169,10 @@ body.platform-win32 {
         flex: 1;
       }
     }
+    // Dragging an event would otherwise select the text inside it. Handled here rather than
+    // with preventDefault on mousedown, which suppressed double-click - see CalendarEvent.
+    user-select: none;
+
     &.selected {
       .default-header,
       .event-details {
@@ -176,10 +180,23 @@ body.platform-win32 {
       }
     }
 
-    // Tentative/pending events: gray background with theme-colored left band
-    &.pending {
-      background-color: rgba(128, 128, 128, 0.15);
+    /*
+    An invitation we sent that guests haven't all answered: dashed outline, keeping the
+    calendar's own colour. Distinct from .pending, which marks an invitation *we* owe a reply
+    to.
 
+    An outline rather than a border, the same way .drag-preview below does it. The chip is
+    border-box so a border did not resize it, but it still ate a pixel of padding and nudged
+    the title sideways, so an event awaiting replies sat misaligned against the ones above
+    and below it.
+    */
+    &.awaiting-guests {
+      outline: 1px dashed var(--event-band-color, currentColor);
+      outline-offset: -1px;
+    }
+
+    // An invitation we have not answered, hatched. CalendarEvent sets its grey fill inline.
+    &.pending {
       .default-header,
       .event-details {
         color: @text-color;
@@ -591,6 +608,12 @@ body.platform-win32 {
       &.selected .month-view-event-title {
         color: var(--event-selected-text-color);
         opacity: 1;
+      }
+
+      // Outline rather than border - see the note in the week/day view rule above.
+      &.awaiting-guests {
+        outline: 1px dashed var(--event-band-color, currentColor);
+        outline-offset: -1px;
       }
 
       // Tentative/pending events: hatched diagonal stripes pattern

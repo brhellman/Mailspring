@@ -1,20 +1,7 @@
-import React from 'react';
 import { WorkspaceStore, ComponentRegistry, localized } from 'mailspring-exports';
 import { QuickEventButton } from './quick-event-button';
 import { MailspringCalendar } from './core/mailspring-calendar';
 import { EventSearchBar } from './core/event-search-bar';
-
-const Notice = () =>
-  AppEnv.inDevMode() ? (
-    <span />
-  ) : (
-    <div className="preview-notice">
-      Calendar is launching later this year! This preview is read-only and only supports Google
-      calendar.
-    </div>
-  );
-
-Notice.displayName = 'Notice';
 
 function adjustMenus() {
   const calendarMenu: (typeof AppEnv.menu.template)[0] = {
@@ -88,9 +75,6 @@ export function activate() {
 
   ComponentRegistry.register(MailspringCalendar, {
     location: WorkspaceStore.Location.Center,
-  });
-  ComponentRegistry.register(Notice, {
-    location: WorkspaceStore.Sheet.Main.Header,
   });
   ComponentRegistry.register(QuickEventButton, {
     location: WorkspaceStore.Location.Center.Toolbar,

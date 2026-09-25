@@ -42,6 +42,7 @@ interface CalendarEventProps {
 
   onClick: (e: React.MouseEvent<any>, event: EventOccurrence) => void;
   onDoubleClick: (event: EventOccurrence) => void;
+  onContextMenu?: (event: EventOccurrence) => void;
   onFocused: (event: EventOccurrence) => void;
 
   /** Called when a drag operation starts on this event */
@@ -65,6 +66,7 @@ export class CalendarEvent extends React.Component<CalendarEventProps, CalendarE
     isCalendarReadOnly: false,
     onClick: () => {},
     onDoubleClick: () => {},
+    onContextMenu: () => {},
     onFocused: () => {},
   };
 
@@ -224,7 +226,28 @@ export class CalendarEvent extends React.Component<CalendarEventProps, CalendarE
   /**
    * Initiate drag on mouse down
    */
+  /*
+  Take focus without letting the browser scroll this event into view.
+
+  tabIndex makes events focusable for keyboard use, and Chromium reveals a newly focused
+  element that is not fully visible. That scrolls the grid by roughly the event's own height
+  between the two presses of a double-click, so the second press lands on the background, the
+  browser never pairs them, and dblclick never fires - double-clicking an event did nothing
+  but shift the grid. preventDefault suppresses the browser's own focus-and-reveal (and the
+  text selection a drag would otherwise start); focus({preventScroll}) then puts focus back
+  without the reveal.
+  */
+  _focusWithoutScrolling = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.button !== 0) {
+      return;
+    }
+    e.preventDefault();
+    (e.currentTarget as HTMLElement).focus({ preventScroll: true });
+  };
+
   _onMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    this._focusWithoutScrolling(e);
+
     if (!this._canDrag() || !this.state.hitZone) {
       return;
     }
@@ -355,7 +378,8 @@ export class CalendarEvent extends React.Component<CalendarEventProps, CalendarE
   }
 
   render() {
-    const { direction, event, onClick, onDoubleClick, selected, isDragging } = this.props;
+    const { direction, event, onClick, onDoubleClick, onContextMenu, selected, isDragging } =
+      this.props;
 
     const classNames = [
       'calendar-event',
@@ -363,6 +387,7 @@ export class CalendarEvent extends React.Component<CalendarEventProps, CalendarE
       selected && 'selected',
       event.isCancelled && 'cancelled',
       event.isPending && 'pending',
+      event.isAwaitingGuests && 'awaiting-guests',
       isDragging && 'dragging',
       this._canDrag() && 'draggable',
       event.isDragPreview && 'drag-preview',
@@ -400,6 +425,11 @@ export class CalendarEvent extends React.Component<CalendarEventProps, CalendarE
         onDoubleClick={(e) => {
           e.stopPropagation();
           onDoubleClick(event);
+        }}
+        onContextMenu={(e) => {
+          e.stopPropagation();
+          e.preventDefault();
+          onContextMenu(event);
         }}
         onMouseMove={this._onMouseMove}
         onMouseLeave={this._onMouseLeave}

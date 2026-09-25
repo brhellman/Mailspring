@@ -23,6 +23,7 @@ interface MonthViewEventProps {
   isCalendarReadOnly?: boolean;
   onClick: (e: React.MouseEvent<any>, event: EventOccurrence) => void;
   onDoubleClick: (event: EventOccurrence) => void;
+  onContextMenu?: (event: EventOccurrence) => void;
   onFocused: (event: EventOccurrence) => void;
   onDragStart?: (event: EventOccurrence, mouseEvent: React.MouseEvent, hitZone: HitZone) => void;
 }
@@ -71,6 +72,14 @@ export class MonthViewEvent extends React.Component<MonthViewEventProps, MonthVi
   _onClick = (e: React.MouseEvent<HTMLDivElement>) => {
     e.stopPropagation();
     this.props.onClick(e, this.props.event);
+  };
+
+  _onContextMenu = (e: React.MouseEvent<HTMLDivElement>) => {
+    e.stopPropagation();
+    e.preventDefault();
+    if (this.props.onContextMenu) {
+      this.props.onContextMenu(this.props.event);
+    }
   };
 
   _onDoubleClick = (e: React.MouseEvent<HTMLDivElement>) => {
@@ -126,7 +135,28 @@ export class MonthViewEvent extends React.Component<MonthViewEventProps, MonthVi
   /**
    * Initiate drag on mouse down
    */
+  /*
+  Take focus without letting the browser scroll this event into view.
+
+  tabIndex makes events focusable for keyboard use, and Chromium reveals a newly focused
+  element that is not fully visible. That scrolls the grid by roughly the event's own height
+  between the two presses of a double-click, so the second press lands on the background, the
+  browser never pairs them, and dblclick never fires - double-clicking an event did nothing
+  but shift the grid. preventDefault suppresses the browser's own focus-and-reveal (and the
+  text selection a drag would otherwise start); focus({preventScroll}) then puts focus back
+  without the reveal.
+  */
+  _focusWithoutScrolling = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (e.button !== 0) {
+      return;
+    }
+    e.preventDefault();
+    (e.currentTarget as HTMLElement).focus({ preventScroll: true });
+  };
+
   _onMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    this._focusWithoutScrolling(e);
+
     if (!this._canDrag() || !this.state.hitZone) {
       return;
     }
@@ -178,6 +208,7 @@ export class MonthViewEvent extends React.Component<MonthViewEventProps, MonthVi
       selected: selected,
       'is-all-day': event.isAllDay,
       pending: event.isPending,
+      'awaiting-guests': event.isAwaitingGuests,
       dragging: isDragging,
       draggable: this._canDrag(),
       'drag-preview': event.isDragPreview,
@@ -217,6 +248,7 @@ export class MonthViewEvent extends React.Component<MonthViewEventProps, MonthVi
         style={style}
         onClick={this._onClick}
         onDoubleClick={this._onDoubleClick}
+        onContextMenu={this._onContextMenu}
         onMouseMove={this._onMouseMove}
         onMouseLeave={this._onMouseLeave}
         onMouseDown={this._onMouseDown}

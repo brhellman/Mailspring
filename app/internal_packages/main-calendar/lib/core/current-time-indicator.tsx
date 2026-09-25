@@ -1,5 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom';
+import Moment from 'moment';
 import classNames from 'classnames';
 import { dayFraction } from './week-view-helpers';
 
@@ -26,7 +27,10 @@ export class CurrentTimeIndicator extends React.Component<
     this._movementTimer = setInterval(() => {
       this.setState(this.getStateFromTime());
     }, 60 * 1000);
-    (ReactDOM.findDOMNode(this) as any).scrollIntoViewIfNeeded(true);
+
+    // Deliberately does not scroll itself into view: where the grid sits is the view's
+    // decision, made on mount in week and day view, and this component remounts during
+    // ordinary interaction.
   }
 
   componentWillUnmount() {

@@ -1,4 +1,10 @@
-import { parseICSString, createVTIMEZONEString } from './calendar-utils';
+import crypto from 'crypto';
+import {
+  parseICSString,
+  emailFromParticipantURI,
+  createVTIMEZONEString,
+  resolveIanaZone,
+} from './calendar-utils';
 
 export { createVTIMEZONEString };
 import { calendarDateFromUnix, shiftedDayStartUnix, calendarDaysBetween } from './calendar-date';
@@ -38,7 +44,7 @@ export interface CreateEventOptions {
   isAllDay?: boolean;
   timezone?: string; // IANA timezone identifier (e.g., 'America/New_York')
   organizer?: { email: string; name?: string };
-  attendees?: Array<{ email: string; name?: string; role?: string }>;
+  attendees?: Array<{ email: string; name?: string; role?: string; partstat?: string }>;
   recurrenceRule?: string;
 }
 
@@ -72,12 +78,15 @@ export interface RecurrenceInfo {
 }
 
 /**
- * Generates a unique ID for calendar events
+ * Generates a unique ID for calendar events.
+ *
+ * RFC 7986 section 5.3 asks for a UID with the uniqueness properties of a UUID, and warns
+ * against deriving one from anything the event itself contains. `Math.random()` is not a
+ * source a collision argument can rest on - V8 gives it 128 bits of internal state but no
+ * guarantee across contexts - so this takes the platform's CSPRNG-backed generator.
  */
 export function generateUID(): string {
-  const timestamp = Date.now().toString(36);
-  const random = Math.random().toString(36).substring(2, 15);
-  return `${timestamp}-${random}@mailspring`;
+  return `${crypto.randomUUID()}@mailspring`;
 }
 
 /**
@@ -276,6 +285,53 @@ function addExdateProperty(
 }
 
 /**
+ * Brings a VCALENDAR's VTIMEZONE components in line with the TZIDs its properties reference.
+ *
+ * RFC 5545 section 3.2.19 makes a TZID meaningful only by reference to a VTIMEZONE in the
+ * same iCalendar object, so the two have to be changed together. Retiming an event into a
+ * different zone leaves any inline exception still sitting in the old one, and dropping that
+ * zone's VTIMEZONE - as replacing the whole set does - leaves the exception pointing at
+ * nothing, which a strict parser is entitled to reject and a lenient one reads as floating.
+ *
+ * Zones the calendar still refers to are kept as the server wrote them; a server's own
+ * VTIMEZONE describes its rules better than one we synthesise. Only a referenced zone with
+ * no component at all gets one, and only when resolveIanaZone identifies the zone - an Outlook
+ * display name or a private X- identifier is left exactly as it arrived rather than described
+ * wrongly.
+ */
+function syncVTimezones(vcalendar: ICALComponent, ical: ICAL, referenceDate: Date): void {
+  const referenced = new Set<string>();
+  for (const component of vcalendar.getAllSubcomponents()) {
+    if (component.name === 'vtimezone') continue;
+    for (const prop of component.getAllProperties()) {
+      const tzid = prop.getParameter('tzid');
+      if (tzid) referenced.add(String(tzid));
+    }
+  }
+
+  const present = new Set<string>();
+  for (const vtz of vcalendar.getAllSubcomponents('vtimezone')) {
+    const tzid = String(vtz.getFirstPropertyValue('tzid') || '');
+    if (!tzid || !referenced.has(tzid)) {
+      vcalendar.removeSubcomponent(vtz);
+      continue;
+    }
+    present.add(tzid);
+  }
+
+  for (const tzid of referenced) {
+    if (present.has(tzid)) continue;
+    const vtimezone = createVTIMEZONEString(tzid, referenceDate);
+    if (!vtimezone) continue; // unidentifiable zone: leave it exactly as it arrived
+    vcalendar.addSubcomponent(
+      new ical.Component(
+        ical.parse(`BEGIN:VCALENDAR\r\nVERSION:2.0\r\n${vtimezone}\r\nEND:VCALENDAR`)
+      ).getFirstSubcomponent('vtimezone')
+    );
+  }
+}
+
+/**
  * Removes an existing exception VEVENT from a VCALENDAR that matches the given
  * target time (in UTC milliseconds). Uses `toJSDate().getTime()` for comparison
  * after registering timezones, so TZID-formatted and UTC-formatted RECURRENCE-IDs
@@ -364,28 +420,23 @@ export function createICSString(options: CreateEventOptions): string {
   // Set summary (title)
   event.summary = options.summary;
 
-  if (!isAllDay && options.timezone) {
+  // moment substitutes the machine's zone for a name it has no data for, so an unknown zone
+  // takes the UTC path below instead.
+  const createZone = options.timezone ? resolveIanaZone(options.timezone) : null;
+
+  if (!isAllDay && createZone) {
     // ical.js TimezoneService only knows UTC/GMT/Z by default — IANA timezone names
     // like "America/Chicago" are never registered, so we can't use it for conversion.
     // Instead, use moment-timezone to extract the correct local time components and
     // create a floating ICAL.Time, then manually stamp the TZID onto the property.
     // This produces: DTSTART;TZID=America/Chicago:20240115T140000
     //
-    // RFC 5545 requires a VTIMEZONE whenever TZID is used; without it, some servers (Yahoo
-    // among them) ignore the TZID and read the wall clock as UTC. See createVTIMEZONEString.
+    // The matching VTIMEZONE is added by syncVTimezones once the TZIDs are stamped below;
+    // without one, servers that don't carry their own zone database (Yahoo among them)
+    // ignore the TZID and read the wall-clock time as UTC.
     const momentTz = require('moment-timezone');
-    const startM = momentTz(options.start).tz(options.timezone);
-    const endM = momentTz(options.end).tz(options.timezone);
-
-    const vtimezoneComp = new ical.Component(
-      ical.parse(
-        `BEGIN:VCALENDAR\r\nVERSION:2.0\r\n${createVTIMEZONEString(
-          options.timezone,
-          options.start
-        )}\r\nEND:VCALENDAR`
-      )
-    ).getFirstSubcomponent('vtimezone');
-    calendar.addSubcomponent(vtimezoneComp);
+    const startM = momentTz(options.start).tz(createZone);
+    const endM = momentTz(options.end).tz(createZone);
 
     event.startDate = new ical.Time(
       {
@@ -449,7 +500,7 @@ export function createICSString(options: CreateEventOptions): string {
       if (attendee.name) {
         prop.setParameter('cn', attendee.name);
       }
-      prop.setParameter('partstat', 'NEEDS-ACTION');
+      prop.setParameter('partstat', attendee.partstat || 'NEEDS-ACTION');
       prop.setParameter('role', attendee.role || 'REQ-PARTICIPANT');
       prop.setParameter('rsvp', 'TRUE');
       vevent.addProperty(prop);
@@ -463,9 +514,66 @@ export function createICSString(options: CreateEventOptions): string {
 
   // Set timestamp
   vevent.addPropertyWithValue('dtstamp', nowUTC(ical));
+  // Guests' clients compare SEQUENCE to decide whether an update supersedes what they hold.
+  vevent.addPropertyWithValue('sequence', 0);
 
   calendar.addSubcomponent(vevent);
+  syncVTimezones(calendar, ical, options.start);
   return calendar.toString();
+}
+
+/**
+ * Records a material change by the organizer, so attendees' clients treat it as an update.
+ *
+ * RFC 5546 section 2.1.4: the organizer increments SEQUENCE whenever they change something
+ * that matters to the guests - the time, the recurrence, whether an occurrence happens at
+ * all. A receiving client compares SEQUENCE against the copy it already holds and ignores
+ * anything that hasn't advanced, so an update sent without this reaches the guests and then
+ * does nothing.
+ *
+ * An absent SEQUENCE means zero (section 3.7.4), so a first change writes 1 rather than
+ * being skipped.
+ *
+ * This is deliberately not done inside the individual edit helpers. One save from the
+ * popover runs several of them - times, guests, recurrence rule - and a bump in each made
+ * SEQUENCE jump by three for a single revision. What a revision *is* is only known where
+ * the change is assembled, so the callers that publish one call this once, at the end.
+ *
+ * Never called when an attendee answers an invitation: a REPLY leaves SEQUENCE alone,
+ * because the attendee is not changing the event.
+ *
+ * @param recurrenceId Bump the matching inline exception rather than the master, for an
+ *   edit that applies to one occurrence.
+ */
+export function bumpEventSequence(ics: string, recurrenceId?: string): string {
+  const { root } = parseICSString(ics);
+  const vevents =
+    root.name === 'vevent' ? [root] : (root.getAllSubcomponents('vevent') as ICALComponent[]);
+  if (!vevents.length) {
+    throw new Error('Invalid ICS: no VEVENT component found');
+  }
+
+  const target = recurrenceId
+    ? vevents.find((v) => matchesRecurrenceId(v, recurrenceId))
+    : vevents.find((v) => !v.getFirstPropertyValue('recurrence-id')) || vevents[0];
+  if (!target) {
+    throw new Error(`No VEVENT found with RECURRENCE-ID matching ${recurrenceId}`);
+  }
+
+  const current = target.getFirstPropertyValue('sequence');
+  target.updatePropertyWithValue('sequence', (parseInt(String(current ?? 0), 10) || 0) + 1);
+  return root.toString();
+}
+
+/** Whether this VEVENT is the inline exception identified by `recurrenceId`. */
+function matchesRecurrenceId(vevent: ICALComponent, recurrenceId: string): boolean {
+  const rid = vevent.getFirstPropertyValue('recurrence-id');
+  if (!rid) return false;
+  const ridStr = typeof rid === 'string' ? rid : String((rid as any).toString());
+  return (
+    ridStr === recurrenceId ||
+    ridStr.replace(/[^0-9TZ]/g, '') === recurrenceId.replace(/[^0-9TZ]/g, '')
+  );
 }
 
 /**
@@ -492,12 +600,16 @@ export function updateEventTimes(ics: string, options: UpdateTimesOptions): stri
     throw new Error('Invalid ICS: no VEVENT component found');
   }
 
-  if (!isAllDay && options.timezone) {
+  // An unknown zone retimes through the zone the event's DTSTART carries, which keeps an Outlook
+  // "Customized Time Zone" and its wall clock.
+  const updateZone = options.timezone ? resolveIanaZone(options.timezone) : null;
+
+  if (!isAllDay && updateZone) {
     // User selected a specific timezone — encode wall-clock time in that zone.
     // This mirrors the timezone path in createICSString.
     const momentTz = require('moment-timezone');
-    const startM = momentTz(startDate).tz(options.timezone);
-    const endM = momentTz(endDate).tz(options.timezone);
+    const startM = momentTz(startDate).tz(updateZone);
+    const endM = momentTz(endDate).tz(updateZone);
 
     event.startDate = new ical.Time(
       {
@@ -527,24 +639,6 @@ export function updateEventTimes(ics: string, options: UpdateTimesOptions): stri
     // Stamp TZID on the date properties
     vevent.getFirstProperty('dtstart')?.setParameter('tzid', options.timezone);
     vevent.getFirstProperty('dtend')?.setParameter('tzid', options.timezone);
-
-    // Ensure a VTIMEZONE component exists in the parent VCALENDAR
-    const vcalendar = root.name === 'vcalendar' ? root : null;
-    if (vcalendar) {
-      // Remove existing VTIMEZONE components and add the current one
-      for (const vtz of vcalendar.getAllSubcomponents('vtimezone')) {
-        vcalendar.removeSubcomponent(vtz);
-      }
-      const vtimezoneComp = new ical.Component(
-        ical.parse(
-          `BEGIN:VCALENDAR\r\nVERSION:2.0\r\n${createVTIMEZONEString(
-            options.timezone,
-            startDate
-          )}\r\nEND:VCALENDAR`
-        )
-      ).getFirstSubcomponent('vtimezone');
-      vcalendar.addSubcomponent(vtimezoneComp);
-    }
   } else {
     // Preserve the original timezone for timed events, or use floating for all-day
     const originalStartZone = event.startDate?.zone;
@@ -558,10 +652,8 @@ export function updateEventTimes(ics: string, options: UpdateTimesOptions): stri
   // Update DTSTAMP to indicate modification
   vevent.updatePropertyWithValue('dtstamp', nowUTC(ical));
 
-  // Increment SEQUENCE if present (for proper sync)
-  const sequence = vevent.getFirstPropertyValue('sequence');
-  if (sequence !== null) {
-    vevent.updatePropertyWithValue('sequence', (parseInt(String(sequence), 10) || 0) + 1);
+  if (root.name === 'vcalendar') {
+    syncVTimezones(root, ical, startDate);
   }
 
   return root.toString();
@@ -656,12 +748,10 @@ export function createRecurrenceException(
     ? createAllDayEndTime(newStartDate, newEndDate, ical)
     : createICALTime(newEndDate, false, ical, originalStartZone);
 
-  // Update DTSTAMP and increment SEQUENCE on the exception
+  // Update DTSTAMP; SEQUENCE is the caller's to advance once per revision.
   const now = nowUTC(ical);
   masterVevent.updatePropertyWithValue('dtstamp', now);
   exceptionVevent.updatePropertyWithValue('dtstamp', now);
-  const sequence = exceptionVevent.getFirstPropertyValue('sequence');
-  exceptionVevent.updatePropertyWithValue('sequence', (parseInt(String(sequence), 10) || 0) + 1);
 
   // Embed the exception VEVENT inline in the master VCALENDAR
   if (vcalendar) {
@@ -704,26 +794,10 @@ export function applyEditsToException(
     throw new Error('Invalid ICS: expected VCALENDAR root');
   }
 
-  // Find the exception VEVENT by RECURRENCE-ID
-  let exceptionVevent: ICALComponent | null = null;
-  for (const vevent of vcalendar.getAllSubcomponents('vevent')) {
-    const rid = vevent.getFirstPropertyValue('recurrence-id');
-    if (rid) {
-      const ridStr =
-        typeof rid === 'string'
-          ? rid
-          : typeof (rid as any).toString === 'function'
-            ? (rid as any).toString()
-            : String(rid);
-      if (
-        ridStr === recurrenceId ||
-        ridStr.replace(/[^0-9TZ]/g, '') === recurrenceId.replace(/[^0-9TZ]/g, '')
-      ) {
-        exceptionVevent = vevent;
-        break;
-      }
-    }
-  }
+  const exceptionVevent =
+    (vcalendar.getAllSubcomponents('vevent') as ICALComponent[]).find((v) =>
+      matchesRecurrenceId(v, recurrenceId)
+    ) || null;
 
   if (!exceptionVevent) {
     throw new Error(`No exception VEVENT found with RECURRENCE-ID matching ${recurrenceId}`);
@@ -741,18 +815,7 @@ export function applyEditsToException(
     exceptionICALEvent.location = edits.location;
   }
   if (edits.attendees !== undefined) {
-    exceptionVevent.removeAllProperties('attendee');
-    for (const attendee of edits.attendees) {
-      const prop = new ical.Property('attendee');
-      prop.setValue(`mailto:${attendee.email}`);
-      if (attendee.name) {
-        prop.setParameter('cn', attendee.name);
-      }
-      prop.setParameter('partstat', attendee.partstat || 'NEEDS-ACTION');
-      prop.setParameter('role', 'REQ-PARTICIPANT');
-      prop.setParameter('rsvp', 'TRUE');
-      exceptionVevent.addProperty(prop);
-    }
+    reconcileAttendees(exceptionVevent, edits.attendees);
   }
 
   exceptionVevent.updatePropertyWithValue('dtstamp', nowUTC(ical));
@@ -966,12 +1029,6 @@ export function addExclusionDate(ics: string, occurrenceStart: number, isAllDay:
   // Update DTSTAMP to indicate modification
   vevent.updatePropertyWithValue('dtstamp', nowUTC(ical));
 
-  // Increment SEQUENCE if present (for proper sync)
-  const sequence = vevent.getFirstPropertyValue('sequence');
-  if (sequence !== null) {
-    vevent.updatePropertyWithValue('sequence', (parseInt(String(sequence), 10) || 0) + 1);
-  }
-
   return root.toString();
 }
 
@@ -1069,29 +1126,81 @@ export function updateRecurrenceRule(ics: string, rruleString: string | null): s
     vevent.removeAllProperties('rdate');
   }
 
-  // Increment SEQUENCE if present (for proper sync per RFC 5545)
-  const sequence = vevent.getFirstPropertyValue('sequence');
-  if (sequence !== null) {
-    vevent.updatePropertyWithValue('sequence', (parseInt(String(sequence), 10) || 0) + 1);
-  }
-
   // Update DTSTAMP to indicate modification
   vevent.updatePropertyWithValue('dtstamp', nowUTC(ical));
 
   return root.toString();
 }
 
+type AttendeeInput = { email: string; name?: string | null; partstat?: string; role?: string };
+
 /**
- * Updates the attendees (ATTENDEE properties) on an event's ICS data.
- * Replaces all existing attendees with the provided list.
+ * Brings one VEVENT's ATTENDEE properties in line with `attendees`, updating the properties
+ * of guests that are already there rather than rebuilding them, so that parameters the
+ * caller never sees - CUTYPE=RESOURCE on a meeting room, ROLE=CHAIR on the organizer,
+ * DELEGATED-TO chains - survive an unrelated edit to the event's title.
+ */
+function reconcileAttendees(vevent: ICALComponent, attendees: AttendeeInput[]): void {
+  const existingByEmail = new Map<string, ReturnType<typeof vevent.getFirstProperty>>();
+  for (const prop of vevent.getAllProperties('attendee')) {
+    const email = prop
+      .getValues()
+      .map(String)
+      .map(emailFromParticipantURI)
+      .find((v) => !!v);
+    if (email) {
+      existingByEmail.set(email, prop);
+    }
+  }
+
+  const keep = new Set<string>();
+  for (const attendee of attendees) {
+    const email = attendee.email.toLowerCase();
+    keep.add(email);
+
+    let prop = existingByEmail.get(email);
+    if (prop) {
+      prop.setValue(`mailto:${attendee.email}`);
+    } else {
+      prop = vevent.addPropertyWithValue('attendee' as any, `mailto:${attendee.email}`);
+      prop.setParameter('rsvp', 'TRUE');
+    }
+    if (attendee.name) {
+      prop.setParameter('cn', attendee.name);
+    }
+    prop.setParameter('partstat', attendee.partstat || 'NEEDS-ACTION');
+    if (attendee.role) {
+      prop.setParameter('role', attendee.role);
+    } else if (!prop.getParameter('role')) {
+      prop.setParameter('role', 'REQ-PARTICIPANT');
+    }
+  }
+
+  for (const [email, prop] of existingByEmail) {
+    if (!keep.has(email)) {
+      vevent.removeProperty(prop);
+    }
+  }
+}
+
+/**
+ * Reconciles the event's ATTENDEE properties with the given guest list: guests already on
+ * the event are updated in place, new ones are added, and ones no longer listed are removed.
  *
- * @param ics - The original ICS string
- * @param attendees - Array of attendee objects
- * @returns The modified ICS string
+ * Updating in place matters because an ATTENDEE property carries more than an address and a
+ * response. Rebuilding the list from scratch would flatten a conference room's
+ * CUTYPE=RESOURCE to an ordinary person, demote the organizer from ROLE=CHAIR, and drop
+ * DELEGATED-TO chains - none of which the popover that calls this has any way to supply.
+ *
+ * @param organizer - Used only when the event has guests but names no ORGANIZER yet. An
+ *   event with guests is required to name one (RFC 5545 section 3.8.4.3), and CalDAV servers
+ *   read it to decide whether to send the invitations (RFC 6638 section 3.2.1). An organizer
+ *   already on the event is left alone: someone else's meeting is not ours to take over.
  */
 export function updateAttendees(
   ics: string,
-  attendees: Array<{ email: string; name?: string | null; partstat?: string }>
+  attendees: Array<{ email: string; name?: string | null; partstat?: string; role?: string }>,
+  organizer?: { email: string; name?: string }
 ): string {
   const ical = getICAL();
   const { root } = parseICSString(ics);
@@ -1101,26 +1210,175 @@ export function updateAttendees(
     throw new Error('Invalid ICS: no VEVENT component found');
   }
 
-  // Remove all existing attendees
-  vevent.removeAllProperties('attendee');
+  reconcileAttendees(vevent, attendees);
 
-  // Add new attendees
-  for (const attendee of attendees) {
-    const prop = new ical.Property('attendee');
-    prop.setValue(`mailto:${attendee.email}`);
-    if (attendee.name) {
-      prop.setParameter('cn', attendee.name);
+  if (attendees.length && organizer && !vevent.getFirstProperty('organizer')) {
+    const prop = vevent.addPropertyWithValue('organizer' as any, `mailto:${organizer.email}`);
+    if (organizer.name) {
+      prop.setParameter('cn', organizer.name);
     }
-    prop.setParameter('partstat', attendee.partstat || 'NEEDS-ACTION');
-    prop.setParameter('role', 'REQ-PARTICIPANT');
-    prop.setParameter('rsvp', 'TRUE');
-    vevent.addProperty(prop);
   }
 
   // Update DTSTAMP
   vevent.updatePropertyWithValue('dtstamp', nowUTC(ical));
 
   return root.toString();
+}
+
+/**
+ * Strips the iTIP METHOD from a calendar object so it can be stored as an ordinary event.
+ *
+ * METHOD is what makes an iCalendar object a scheduling *message* rather than a calendar
+ * entry (RFC 5545 section 3.7.2). An invitation arrives as METHOD:REQUEST, and PUTting that
+ * to a CalDAV collection is invalid - RFC 4791 section 4.1 requires stored objects to carry
+ * no METHOD, and servers are entitled to reject it.
+ */
+export function stripITIPMethod(ics: string): string {
+  const { root } = parseICSString(ics);
+  const vcalendar = root.name === 'vcalendar' ? root : null;
+  if (!vcalendar) {
+    return ics; // a bare VEVENT never had a METHOD to begin with
+  }
+  vcalendar.removeAllProperties('method');
+  return vcalendar.toString();
+}
+
+/**
+ * Builds the iTIP COUNTER an attendee sends to propose a different time for a meeting they
+ * were invited to - Google Calendar's "Propose a new time" (RFC 5546 section 3.2.7).
+ *
+ * A COUNTER is the original event with the proposed DTSTART/DTEND, not a fresh event: it
+ * keeps the UID and ORGANIZER so the organizer's calendar can match it to the invitation,
+ * and bumps DTSTAMP so a later proposal supersedes an earlier one. Only the proposing
+ * attendee is listed, since the other guests' responses are the organizer's to track and
+ * echoing them back would invite the organizer's calendar to overwrite them.
+ *
+ * Recurrence is deliberately dropped. A counter-proposal names one specific time, so an
+ * RRULE inherited from the invitation would read as "move the entire series here".
+ *
+ * @returns The COUNTER ICS, or null if the proposer isn't an attendee of the event.
+ */
+export function createCounterProposal(
+  ics: string,
+  options: { email: string; name?: string; start: Date; end: Date; comment?: string }
+): string | null {
+  const ical = getICAL();
+  const { root } = parseICSString(ics);
+
+  const vcalendar = root.name === 'vcalendar' ? root : null;
+  if (!vcalendar) {
+    throw new Error('Invalid ICS: expected VCALENDAR root');
+  }
+
+  // Counter the master, not one of its modified occurrences.
+  const vevents = vcalendar.getAllSubcomponents('vevent') as ICALComponent[];
+  const vevent = vevents.find((c) => !c.getFirstPropertyValue('recurrence-id')) || vevents[0];
+  if (!vevent) {
+    throw new Error('Invalid ICS: no VEVENT component found');
+  }
+
+  const target = options.email.toLowerCase();
+  const mine = vevent.getAllProperties('attendee').find((prop) =>
+    prop
+      .getValues()
+      .map(String)
+      .some((v) => emailFromParticipantURI(v) === target)
+  );
+  if (!mine) {
+    return null;
+  }
+
+  const counter = new ical.Component(['vcalendar', [], []]);
+  counter.updatePropertyWithValue('prodid', '-//Mailspring//Calendar//EN');
+  counter.updatePropertyWithValue('version', '2.0');
+  counter.updatePropertyWithValue('calscale', 'GREGORIAN');
+  counter.updatePropertyWithValue('method', 'COUNTER');
+
+  const proposed = new ical.Component(ical.parse(vevent.toString())) as ICALComponent;
+
+  // One proposed time, so nothing that would spread it over a series survives.
+  for (const name of ['rrule', 'rdate', 'exdate', 'recurrence-id', 'attendee']) {
+    proposed.removeAllProperties(name);
+  }
+
+  const attendee = proposed.addPropertyWithValue('attendee' as any, `mailto:${options.email}`);
+  const cn = mine.getParameter('cn') || options.name;
+  if (cn) {
+    attendee.setParameter('cn', cn);
+  }
+  const role = mine.getParameter('role');
+  if (role) {
+    attendee.setParameter('role', role);
+  }
+  attendee.setParameter('partstat', 'TENTATIVE');
+
+  const event = new ical.Event(proposed);
+  event.startDate = ical.Time.fromJSDate(options.start, true);
+  event.endDate = ical.Time.fromJSDate(options.end, true);
+
+  // DURATION and DTEND are mutually exclusive (RFC 5545 section 3.6.1); setting endDate
+  // above writes DTEND, so a DURATION carried over from the invitation must go.
+  proposed.removeAllProperties('duration');
+
+  proposed.updatePropertyWithValue('dtstamp', nowUTC(ical));
+  if (options.comment) {
+    proposed.updatePropertyWithValue('comment', options.comment);
+  }
+
+  counter.addSubcomponent(proposed);
+  return counter.toString();
+}
+
+/**
+ * Sets the PARTSTAT of a single attendee, leaving every other attendee and every
+ * other parameter on the matching ATTENDEE property untouched.
+ *
+ * This is the CalDAV RSVP mechanism (RFC 6638 §3.2.5): an attendee responds by
+ * writing their own PARTSTAT back to their copy of the event. Rewriting the whole
+ * attendee list instead would discard the organizer's ROLE/CUTYPE/RSVP parameters
+ * and the other attendees' responses.
+ *
+ * Recurring series are answered as a whole: every VEVENT in the calendar (master
+ * and any inline exceptions) gets the new status.
+ *
+ * @returns The modified ICS string, or null if the attendee isn't in the event.
+ */
+export function updateAttendeeStatus(ics: string, email: string, partstat: string): string | null {
+  const ical = getICAL();
+  const { root } = parseICSString(ics);
+
+  const vevents =
+    root.name === 'vevent' ? [root] : (root.getAllSubcomponents('vevent') as ICALComponent[]);
+  if (!vevents.length) {
+    throw new Error('Invalid ICS: no VEVENT component found');
+  }
+
+  const target = email.toLowerCase();
+  let matched = false;
+
+  for (const vevent of vevents) {
+    let changedThisVevent = false;
+    for (const attendee of vevent.getAllProperties('attendee')) {
+      const isMatch = attendee
+        .getValues()
+        .some((v) => emailFromParticipantURI(String(v)) === target);
+      if (!isMatch) continue;
+
+      attendee.setParameter('partstat', partstat);
+      // The response has been given, so the organizer no longer needs to ask for one.
+      attendee.removeParameter('rsvp');
+      changedThisVevent = true;
+    }
+    if (changedThisVevent) {
+      // Only the components that actually changed advance; a fresh DTSTAMP on an untouched
+      // occurrence claims a revision that says nothing, and RFC 5546 section 3.2 breaks ties
+      // at equal SEQUENCE on exactly that value.
+      vevent.updatePropertyWithValue('dtstamp', nowUTC(ical));
+      matched = true;
+    }
+  }
+
+  return matched ? root.toString() : null;
 }
 
 /**

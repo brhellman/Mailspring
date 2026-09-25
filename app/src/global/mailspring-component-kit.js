@@ -88,6 +88,8 @@ lazyLoad('KeyCommandsRegion', 'key-commands-region');
 lazyLoad('BindGlobalCommands', 'bind-global-commands');
 lazyLoad('TabGroupRegion', 'tab-group-region');
 lazyLoadFrom('TabGroupContext', 'tab-group-region');
+lazyLoadFrom('ProposeTimePopover', 'propose-time-popover');
+lazyLoadFrom('formatProposedTime', 'propose-time-popover');
 lazyLoad('InjectedComponent', 'injected-component');
 lazyLoad('TokenizingTextField', 'tokenizing-text-field');
 lazyLoad('ParticipantsTextField', 'participants-text-field');

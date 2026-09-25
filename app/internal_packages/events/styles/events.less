@@ -69,8 +69,24 @@
       }
     }
 
+    .event-conflicts {
+      margin-top: 6px;
+      color: @color-error;
+
+      .event-conflicts-title {
+        font-weight: @font-weight-semi-bold;
+      }
+
+      .event-conflict {
+        opacity: 0.85;
+      }
+    }
+
     .event-actions {
       display: flex;
+      // Column so the "where this is going" line sits under the buttons, not beside them.
+      flex-direction: column;
+      align-items: flex-start;
 
       .btn-rsvp {
         margin-right: 10.5px;
@@ -107,6 +123,77 @@
           font-weight: @font-weight-semi-bold;
           margin-top: 5px;
         }
+      }
+
+      &.event-no-rsvp {
+        color: @text-color-subtle;
+        margin-top: 5px;
+      }
+
+      .event-rsvp-buttons {
+        display: flex;
+        flex-direction: row;
+      }
+
+      .event-rsvp-destination {
+        align-items: center;
+        color: @text-color-subtle;
+        display: flex;
+        flex-wrap: wrap;
+        font-size: 0.9em;
+        gap: 4px;
+        margin-top: 6px;
+
+        .event-rsvp-calendar-picker {
+          background: @background-primary;
+          border: 1px solid @border-color-divider;
+          border-radius: @border-radius-base;
+          color: @text-color;
+          font-size: inherit;
+          max-width: 240px;
+          padding: 2px 6px;
+
+          &:hover {
+            background: @background-secondary;
+          }
+
+          &:focus {
+            border-color: @accent-primary;
+            outline: none;
+          }
+        }
+      }
+
+      // A link under the three RSVP buttons rather than a fourth button. Left with the .btn
+      // box and padding:0 it drew a border tight around the text, matching neither the
+      // buttons above it nor the destination line below.
+      .btn-propose-time {
+        background: none;
+        border: none;
+        box-shadow: none;
+        color: @accent-primary;
+        cursor: pointer;
+        height: auto;
+        margin-top: 8px;
+        padding: 0;
+
+        &:hover {
+          background: none;
+          text-decoration: underline;
+        }
+      }
+
+      &.event-counter {
+        .event-counter-notice {
+          font-weight: @font-weight-semi-bold;
+          margin-top: 5px;
+        }
+      }
+
+      .event-proposed-time {
+        color: @text-color-subtle;
+        font-size: 0.9em;
+        margin-top: 6px;
       }
     }
   }

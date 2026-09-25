@@ -483,6 +483,20 @@ export const selectAttachment = create('selectAttachment', ActionScopeWindow);
 export const removeAttachment = create('removeAttachment', ActionScopeWindow);
 
 export const fetchBodies = create('fetchBodies', ActionScopeMainWindow);
+
+/*
+Public: Ask the sync engine to poll the CalDAV servers now.
+
+Calendar sync runs on its own thread with its own timer, and does not wake with the mail
+workers, so this is the only way to pull calendar changes before the next tick. Scoped to the
+main window because that is where the sync processes live; the calendar runs in its own
+window and reaches them through this action.
+
+Takes the account id to poll. A write reaches one account's server, and polling the rest
+puts that account's re-read behind however many other CalDAV round-trips are in flight.
+Omit it only to refresh everything on purpose, as the Refresh Calendars menu item does.
+*/
+export const syncCalendarNow = create('syncCalendarNow', ActionScopeMainWindow);
 export const fetchAndOpenFile = create('fetchAndOpenFile', ActionScopeWindow);
 export const fetchAndSaveFile = create('fetchAndSaveFile', ActionScopeWindow);
 export const fetchAndSaveAllFiles = create('fetchAndSaveAllFiles', ActionScopeWindow);

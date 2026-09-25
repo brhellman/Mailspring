@@ -3,6 +3,7 @@ import * as Attributes from '../attributes';
 import { Event } from '../models/event';
 import { AttributeValues } from '../models/model';
 import { localized } from '../../intl';
+import * as Actions from '../actions';
 
 /**
  * Snapshot of event data for undo/redo support.
@@ -159,5 +160,18 @@ export class SyncbackEventTask extends Task {
 
   label() {
     return localized('Saving event...');
+  }
+
+  /*
+  Pull the calendar again once the server has the change.
+
+  The event is already on screen - the sync engine writes it locally before it goes to the
+  network - but the server is entitled to alter what it stored, and Google does: it rewrites
+  times into its own form, assigns its own identifiers, and adds scheduling state for guests.
+  Re-reading afterwards keeps what we show equal to what the server actually holds instead of
+  what we asked it for.
+  */
+  async onSuccess() {
+    Actions.syncCalendarNow(this.accountId);
   }
 }
