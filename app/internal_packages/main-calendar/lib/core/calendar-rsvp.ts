@@ -36,7 +36,7 @@ export function canRespondToEvent(occurrence: EventOccurrence): boolean {
  * which is account-scoped, and would find nothing.
  */
 export function myAttendeeEmail(occurrence: EventOccurrence): string | null {
-  for (const attendee of occurrence.attendees || []) {
+  for (const attendee of occurrence.attendees) {
     if (!attendee.email) continue;
     const account = AccountStore.accountForEmail(attendee.email);
     if (account && account.id === occurrence.accountId) {
@@ -50,7 +50,7 @@ export function myAttendeeEmail(occurrence: EventOccurrence): string | null {
 export function myParticipationStatus(occurrence: EventOccurrence): string | null {
   const me = myAttendeeEmail(occurrence);
   if (!me) return null;
-  const mine = (occurrence.attendees || []).find((a) => a.email && a.email.toLowerCase() === me);
+  const mine = occurrence.attendees.find((a) => a.email && a.email.toLowerCase() === me);
   return mine ? (mine.partstat || 'NEEDS-ACTION').toUpperCase() : null;
 }
 

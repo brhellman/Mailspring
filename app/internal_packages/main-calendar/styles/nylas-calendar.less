@@ -169,8 +169,8 @@ body.platform-win32 {
         flex: 1;
       }
     }
-    // Dragging an event would otherwise select the text inside it. Handled here rather than
-    // with preventDefault on mousedown, which suppressed double-click - see CalendarEvent.
+    // Dragging would select the event's text. Not preventDefault on mousedown, which would
+    // suppress double-click - see CalendarEvent.
     user-select: none;
 
     &.selected {
@@ -185,10 +185,8 @@ body.platform-win32 {
     calendar's own colour. Distinct from .pending, which marks an invitation *we* owe a reply
     to.
 
-    An outline rather than a border, the same way .drag-preview below does it. The chip is
-    border-box so a border did not resize it, but it still ate a pixel of padding and nudged
-    the title sideways, so an event awaiting replies sat misaligned against the ones above
-    and below it.
+    An outline, as .drag-preview below uses: a border would take a pixel of padding and shift
+    the title out of line with the events around it.
     */
     &.awaiting-guests {
       outline: 1px dashed var(--event-band-color, currentColor);
