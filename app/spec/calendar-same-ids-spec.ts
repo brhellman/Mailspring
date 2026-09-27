@@ -2,8 +2,7 @@ import { sameCalendarIds } from '../internal_packages/main-calendar/lib/core/cal
 
 describe('sameCalendarIds', function () {
   it('treats two freshly-built empty lists as unchanged', function () {
-    // This is the case that mattered: `config.get(key) || []` mints a new array each call,
-    // so identity comparison reported a change on every update.
+    // `config.get(key) || []` mints a new array each call, so identity would report a change.
     expect(sameCalendarIds([], [])).toBe(true);
   });
 

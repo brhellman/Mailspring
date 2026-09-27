@@ -13,8 +13,8 @@ const toPicker = (unixSeconds: number) => unixSeconds * 1000;
 /**
  * The existing slot on one line: "Mon, Aug 24 · 12:00 PM – 12:30 PM".
  *
- * Kept short deliberately - it sits above the pickers as context, and the long form wrapped
- * onto a second line in a narrow window, which made a reference line look like a heading.
+ * Short so it stays on one line above the pickers in a narrow window, where a wrapped
+ * reference line reads as a heading.
  */
 function compactSlot(start: number, end: number): string {
   const s = moment.unix(start);

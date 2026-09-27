@@ -80,7 +80,7 @@ function frequencyToRepeatOption(frequency: string | undefined): RepeatOption {
 }
 
 // A drawn glyph rather than a "×" character: the multiplication sign inherits the body
-// font's weight and baseline, so it sat high and thin next to the section title.
+// font's weight and baseline, so it sits high and thin next to the section title.
 const closeGlyph = (
   <svg width="9" height="9" viewBox="0 0 9 9" fill="none" aria-hidden="true">
     <path d="M1 1l7 7M8 1l-7 7" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
@@ -934,27 +934,21 @@ function sortAttendeesByStatus(attendees: EventAttendee[]): EventAttendee[] {
   });
 }
 
-/*
-An event DESCRIPTION is markup written by whoever created the event, which for an invitation
-is anyone who can send mail. Only its text is wanted here, but Google and Outlook both put
-the real text in <meta itemprop="description">, so it has to be parsed rather than stripped.
-
-DOMParser builds an inert document: no script runs and no subresource is fetched, so an
-`<img src=x onerror=...>` never executes. Assigning to innerHTML would not run inline script
-either, but it does create live elements whose loads fire - which is the half that bites.
-*/
+// A description is markup from whoever sent the invitation. DOMParser's document is inert, so the
+// images it references are never fetched.
 function extractNotesFromDescription(description: string) {
-  const descriptionRoot = new DOMParser().parseFromString(description || '', 'text/html').body;
+  const doc = new DOMParser().parseFromString(description, 'text/html');
+  const descriptionRoot = doc.body;
 
-  // innerText needs layout to insert line breaks, and a DOMParser document has none - it
-  // degrades to textContent, which runs every paragraph and list item together into one
-  // wall of words. Turn the block boundaries into newlines before reading the text out.
+  // The parsed document has no layout, so block boundaries become newlines here; Google writes
+  // each line of a description as <br>-separated HTML.
   descriptionRoot.querySelectorAll('br').forEach((br) => br.replaceWith('\n'));
   descriptionRoot
     .querySelectorAll('p, div, li, tr, h1, h2, h3, h4, h5, h6, blockquote')
     .forEach((block) => block.append('\n'));
 
-  const els = descriptionRoot.querySelectorAll('meta[itemprop=description]');
+  // The parser moves <meta> tags that lead the description into <head>.
+  const els = doc.querySelectorAll('meta[itemprop=description]');
   let notes: string = null;
   if (els.length) {
     notes = Array.from(els)
