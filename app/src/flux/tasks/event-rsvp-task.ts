@@ -15,8 +15,8 @@ import {
  * Sends an iTIP response to a meeting organizer over email (RFC 5546 / RFC 6047).
  *
  * Two methods travel this way. REPLY answers the invitation with a participation status;
- * COUNTER proposes a different time and carries no status. The sync engine defaults an
- * absent `method` to REPLY, so a task queued before counter-proposals existed still sends.
+ * COUNTER proposes a different time and carries no status. The sync engine reads an absent
+ * `method` as REPLY.
  */
 export class EventRSVPTask extends Task {
   ics: string;

@@ -534,10 +534,8 @@ export function createICSString(options: CreateEventOptions): string {
  * An absent SEQUENCE means zero (section 3.7.4), so a first change writes 1 rather than
  * being skipped.
  *
- * This is deliberately not done inside the individual edit helpers. One save from the
- * popover runs several of them - times, guests, recurrence rule - and a bump in each made
- * SEQUENCE jump by three for a single revision. What a revision *is* is only known where
- * the change is assembled, so the callers that publish one call this once, at the end.
+ * Not called inside the individual edit helpers: one save runs several of them, and only the
+ * caller that assembles the revision knows it is one, so it calls this once, at the end.
  *
  * Never called when an attendee answers an invitation: a REPLY leaves SEQUENCE alone,
  * because the attendee is not changing the event.

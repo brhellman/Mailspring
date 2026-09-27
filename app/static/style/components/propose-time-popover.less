@@ -3,10 +3,8 @@
 /*
 The picker an attendee uses to counter-propose a meeting time.
 
-Lives with the shared component styles rather than in a package: the popover opens from the
-message header in the main window and from the calendar's own window, and a package
-stylesheet only loads for its own windowTypes - so in the calendar it rendered with no styles
-at all.
+Lives with the shared component styles: the popover opens in the main window and in the
+calendar's own window, and a package stylesheet only loads for its package's windowTypes.
 */
 .propose-time-popover {
   // Sized to the window rather than fixed. A tiling window manager, a split screen or a
@@ -14,15 +12,8 @@ at all.
   // that assumes the room is there simply renders off the bottom of the screen.
   width: 320px;
   max-width: ~"calc(100vw - 32px)";
-  /*
-  Never a scroll container.
-
-  The time picker's option list is absolutely positioned and hangs below its field. Any
-  overflow value other than visible turns this box into its clipping ancestor, which cut the
-  list off mid-way and put a scrollbar down the side of the popover. The content here is
-  short and bounded - two rows, a note and two buttons - so it does not need to scroll, and
-  FixedPopover already flips the whole popover when there is no room below.
-  */
+  // Never a scroll container, for the same reason as .propose-time-body below; FixedPopover
+  // flips the popover when there is no room beneath.
   overflow: visible;
   display: flex;
   flex-direction: column;
@@ -87,10 +78,8 @@ at all.
   /*
   The date reads as a field, not a hyperlink.
 
-  DatePicker styles its value with @text-color-link app-wide, which is reasonable in prose
-  but wrong beside a boxed TimePicker: two adjacent controls in the same form looked like
-  entirely different kinds of thing. This gives it the same shape as the time inputs while
-  leaving the component's own behaviour alone.
+  DatePicker colours its value @text-color-link app-wide, which suits prose but not a form;
+  this boxes it like the TimePicker beside it.
   */
   .date-picker .day-text {
     border: 1px solid @border-color-divider;
