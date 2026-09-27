@@ -138,13 +138,9 @@ export class MonthViewEvent extends React.Component<MonthViewEventProps, MonthVi
   /*
   Take focus without letting the browser scroll this event into view.
 
-  tabIndex makes events focusable for keyboard use, and Chromium reveals a newly focused
-  element that is not fully visible. That scrolls the grid by roughly the event's own height
-  between the two presses of a double-click, so the second press lands on the background, the
-  browser never pairs them, and dblclick never fires - double-clicking an event did nothing
-  but shift the grid. preventDefault suppresses the browser's own focus-and-reveal (and the
-  text selection a drag would otherwise start); focus({preventScroll}) then puts focus back
-  without the reveal.
+  Chromium scrolls a newly focused element into view, which moves the grid between the two
+  presses of a double-click so dblclick never fires. preventDefault stops that reveal (and the
+  text selection a drag would start); focus({preventScroll}) then takes focus without it.
   */
   _focusWithoutScrolling = (e: React.MouseEvent<HTMLDivElement>) => {
     if (e.button !== 0) {

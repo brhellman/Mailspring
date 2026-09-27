@@ -1835,16 +1835,13 @@ describe('SEQUENCE, so guests see an update as an update', function () {
   });
 
   it('advances an event that never had one, since absent means zero', function () {
-    // RFC 5545 section 3.7.4. Every event this client created before now lacked SEQUENCE,
-    // and a bump guarded on the property already existing silently did nothing, so guests
-    // ignored the update.
+    // RFC 5545 section 3.7.4.
     const noSeq = SIMPLE_ICS.replace('SEQUENCE:0\r\n', '').replace('SEQUENCE:0\n', '');
     expect(seq(ICSEventHelpers.bumpEventSequence(noSeq))).toBe(1);
   });
 
   it('advances once for a save that touched times, guests and recurrence together', function () {
-    // The whole point of moving the bump out of the helpers: the popover runs all three on
-    // one save, and a bump inside each made SEQUENCE jump by three for a single revision.
+    // The popover runs all three on one save, which is still one revision.
     let ics = ICSEventHelpers.updateEventTimes(SIMPLE_ICS, {
       start: Math.round(new Date('2026-03-01T16:00:00Z').getTime() / 1000),
       end: Math.round(new Date('2026-03-01T17:00:00Z').getTime() / 1000),
@@ -1967,9 +1964,8 @@ describe('ICSEventHelpers VTIMEZONE bookkeeping', function () {
     [...new Set((ics.match(/TZID=([^:;]*)/g) || []).map((m) => m.replace('TZID=', '')))].sort();
 
   it('keeps a VTIMEZONE for every zone the calendar still references', function () {
-    // Retiming the master into another zone leaves the inline exception in Berlin. Replacing
-    // the whole VTIMEZONE set - which is what this used to do - left that TZID pointing at
-    // nothing, which a strict parser may reject and a lenient one reads as floating time.
+    // Retiming the master into another zone leaves the inline exception in Berlin; a TZID
+    // with no VTIMEZONE is rejected by a strict parser and read as floating by a lenient one.
     const out = ICSEventHelpers.updateEventTimes(RECURRING_BERLIN_WITH_EXCEPTION, {
       start: Math.round(new Date('2024-01-15T16:00:00Z').getTime() / 1000),
       end: Math.round(new Date('2024-01-15T17:00:00Z').getTime() / 1000),
@@ -2032,8 +2028,7 @@ describe('ICSEventHelpers with Windows timezone identifiers', function () {
   });
 
   it('writes the right instant for an event created in a Windows-named zone', function () {
-    // 09:00 in Central Standard Time is 15:00Z in January. Before the mapping, moment fell
-    // back to the machine's zone and this landed at 09:00 local instead.
+    // 09:00 in Central Standard Time is 15:00Z in January.
     const ics = ICSEventHelpers.createICSString({
       summary: 'Outlook meeting',
       start: new Date('2024-01-15T15:00:00Z'),

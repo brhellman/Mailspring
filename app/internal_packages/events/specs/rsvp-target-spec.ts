@@ -236,8 +236,8 @@ describe('resolveRSVPTarget with server-reported ownership', function () {
   });
 
   it('accepts a calendar the server says is ours, whatever it is called', function () {
-    // The other half: a default calendar named "Calendar" or "Kalender" is still ours, and
-    // the name heuristic alone would never have found it.
+    // A default calendar named "Calendar" or "Kalender" is still ours; the name heuristic
+    // alone cannot find it.
     const mine = calendar({ id: 'cal-plain', name: 'Calendar', ownership: 'mine' });
     const resolution = resolveRSVPTarget({
       events: [event({ id: 'e1', calendarId: 'cal-plain' })],

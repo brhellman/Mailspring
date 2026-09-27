@@ -29,10 +29,8 @@
   }
 
   /*
-  The card itself carries tabIndex so the keyboard can reach it, and it is focused as soon as
-  it opens - which made the global :focus-visible rule draw a 2px accent outline around the
-  whole popover every single time one was opened, reading as an error state. A floating card
-  with its own shadow is already distinct from the page; the controls inside keep their rings.
+  The card takes focus as it opens, and the global :focus-visible ring around a whole card
+  reads as an error. Its shadow already sets it apart; the controls inside keep their rings.
   */
   &:focus,
   &:focus-visible {
@@ -299,10 +297,8 @@
   /*
   The date and the time read as two halves of one control.
 
-  DatePicker draws its value as a div coloured @text-color-link, TimePicker as a bare text
-  input, so a single row looked like a hyperlink sitting next to a form field. Giving both
-  the same box matches what the propose-time popover already does with the same two
-  components; neither component's own behaviour is touched.
+  DatePicker colours its value @text-color-link and TimePicker is a bare input; both get the
+  same box here, as in the propose-time popover.
   */
   .event-property-row .row-value {
     .date-picker .day-text,
