@@ -97,9 +97,9 @@ export interface EventRendererProps {
    *
    * Colours live in a module-level cache rather than in props, so components that guard
    * themselves with shouldComponentUpdate cannot see a recolour and would keep painting the
-   * old colours. Threading a version through as an ordinary prop lets them invalidate
-   * normally. The alternative - keying the view on the version - remounted the entire
-   * calendar on every recolour, discarding scroll position, selection and subscriptions.
+   * old colours. A version passed as an ordinary prop lets them invalidate normally, where
+   * keying the view on it would remount the calendar and lose scroll, selection and
+   * subscriptions.
    */
   paintVersion: string;
 }
@@ -178,12 +178,9 @@ export class MailspringCalendar extends React.Component<
   /*
   A press on an event that has not yet moved far enough to be a drag.
 
-  Deliberately an instance field rather than state. Putting it in state re-rendered the
-  calendar on mousedown, which moved the pressed element out from under the pointer - so the
-  second press of a double-click landed on nothing and the browser never formed a dblclick
-  at all. Double-clicking a draggable event did nothing but scroll the grid. It is promoted
-  into state by _onCalendarMouseMove once updateDragState says the threshold is crossed,
-  which is the point a drag genuinely begins and a re-render is warranted.
+  An instance field, not state: a re-render on mousedown moves the pressed element out from
+  under the pointer, so the second press of a double-click misses and dblclick never fires.
+  _onCalendarMouseMove promotes it into state once updateDragState says a drag has begun.
   */
   _pendingDragState: DragState | null = null;
   /** A press on empty grid space that has not yet travelled far enough to draw a range. */
@@ -395,7 +392,7 @@ export class MailspringCalendar extends React.Component<
   _onCalendarContextMenu = (args: CalendarEventArgs) => {
     if (args.time === null) return;
 
-    const editable = getEditableCalendars(this.state.calendars, this.state.disabledCalendars || []);
+    const editable = getEditableCalendars(this.state.calendars, this.state.disabledCalendars);
     if (editable.length === 0) return;
 
     require('@electron/remote')
@@ -470,7 +467,7 @@ export class MailspringCalendar extends React.Component<
   }) {
     const editableCalendars = getEditableCalendars(
       this.state.calendars,
-      this.state.disabledCalendars || []
+      this.state.disabledCalendars
     );
     if (editableCalendars.length === 0) {
       showNoEditableCalendarsError();
@@ -864,7 +861,7 @@ export class MailspringCalendar extends React.Component<
     if (target && typeof target.closest === 'function' && target.closest('.calendar-event')) {
       return;
     }
-    const editable = getEditableCalendars(this.state.calendars, this.state.disabledCalendars || []);
+    const editable = getEditableCalendars(this.state.calendars, this.state.disabledCalendars);
     if (editable.length === 0) {
       return;
     }

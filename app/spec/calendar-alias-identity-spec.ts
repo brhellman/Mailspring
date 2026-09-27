@@ -79,8 +79,6 @@ describe('calendar identity through an account alias', function () {
     });
 
     it('resolves an alias to the account that owns it', function () {
-      // The alias path had never been exercised: this account has no aliases configured in
-      // real use, so nothing proved accountForEmail walked past the primary address.
       expect(AccountStore.accountForEmail(ALIAS)?.id).toBe(ACCOUNT_ID);
     });
 
