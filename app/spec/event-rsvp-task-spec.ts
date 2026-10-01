@@ -69,9 +69,6 @@ describe('EventRSVPTask.forReplying', function () {
     });
 
   it('leaves exactly one ATTENDEE in every VEVENT, not just the master', function () {
-    // RFC 5546 section 3.2.3. A series invitation carries its modified occurrences as
-    // further VEVENTs; leaving their guest lists intact ships the organizer a REPLY that
-    // also purports to speak for everyone else on the invitation.
     const perVevent = attendeesPerVevent(reply().ics);
     expect(perVevent.length).toBe(2);
     for (const attendees of perVevent) {

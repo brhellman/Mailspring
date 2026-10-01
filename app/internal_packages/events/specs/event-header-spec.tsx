@@ -10,6 +10,8 @@ import {
   Rx,
   AttachmentStore,
   Event,
+  EventRSVPTask,
+  Calendar,
   File,
   Message,
 } from 'mailspring-exports';
@@ -215,8 +217,17 @@ describe('EventHeader for an invitation to one occurrence of a series', function
       vcalendar(emailed).replace('VERSION:2.0', 'VERSION:2.0\r\nMETHOD:REQUEST')
     );
     spyOn(AttachmentStore, 'pathForFile').andReturn(icsPath);
-    spyOn(Rx.Observable, 'fromQuery').andReturn(
-      Rx.Observable.just(new Event({ id: 'e1', accountId: 'a1', ics: calendarIcs } as any))
+    // The header asks for the UID's copies, the account's calendars and the nearby events;
+    // one copy on our own calendar, and nothing else booked around it.
+    const copy = new Event({
+      id: 'e1',
+      accountId: 'a1',
+      calendarId: 'c1',
+      ics: calendarIcs,
+    } as any);
+    const ours = new Calendar({ id: 'c1', accountId: 'a1', ownership: 'mine' } as any);
+    spyOn(Rx.Observable, 'fromQuery').andCallFake((query: any) =>
+      Rx.Observable.just(query._klass === Calendar ? [ours] : [copy])
     );
     const header = ReactTestUtils.renderIntoDocument(
       <EventHeader
@@ -259,7 +270,8 @@ describe('EventHeader for an invitation to one occurrence of a series', function
       (button) => button.textContent === 'Decline'
     );
     ReactTestUtils.Simulate.click(decline);
-    return queueTask.mostRecentCall.args[0].ics;
+    // The answer is also written onto our own copy; the emailed REPLY is the EventRSVPTask.
+    return queueTask.calls.map((c) => c.args[0]).find((t) => t instanceof EventRSVPTask).ics;
   }
 
   beforeEach(function () {
@@ -279,7 +291,7 @@ describe('EventHeader for an invitation to one occurrence of a series', function
     });
   });
 
-  it('still shows, and answers from, the calendar copy for an invitation to the whole series', function () {
+  it('still shows the calendar copy for an invitation to the whole series', function () {
     const text = render(
       SERIES,
       vcalendar([...SERIES.slice(0, 3), 'SUMMARY:Huddle (as synced)', ...GUESTS])
@@ -287,7 +299,8 @@ describe('EventHeader for an invitation to one occurrence of a series', function
     runs(() => {
       expect(text('event-day')).toBe(dayOf('2025-09-23T14:00:00Z'));
       expect(text('event-title')).toBe('Huddle (as synced)');
-      expect(declineAndGetReply(text)).toContain('SUMMARY:Huddle (as synced)');
+      // The REPLY answers the REQUEST as mailed (RFC 5546 section 3.2.3), not the synced copy.
+      expect(declineAndGetReply(text)).not.toContain('SUMMARY:Huddle (as synced)');
     });
   });
 });
