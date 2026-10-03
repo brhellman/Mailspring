@@ -212,19 +212,12 @@ export class CalendarEventPopover extends React.Component<
     } catch (e) {
       // Fall back to defaults if we can't read the event
     }
-    this.setState({ repeat, timezone, originalRepeat: repeat });
+    this.setState({ repeat, timezone, originalRepeat: repeat, originalTimezone: timezone });
   }
 
   onEdit = async () => {
     await this._loadEditDefaults();
     this.setState({ editing: true });
-    this.setState({
-      editing: true,
-      repeat,
-      timezone,
-      originalRepeat: repeat,
-      originalTimezone: timezone,
-    });
   };
 
   componentDidMount() {

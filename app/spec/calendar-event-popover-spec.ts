@@ -192,7 +192,6 @@ describe('CalendarEventPopover save path and the recurrence rule', function () {
 });
 
 describe('CalendarEventPopover save path and SEQUENCE', function () {
-describe('CalendarEventPopover save path and the organizer', function () {
   let queued: any[];
 
   beforeEach(function () {
@@ -281,6 +280,16 @@ describe('CalendarEventPopover and who may edit', function () {
     const popover = popoverFor({ startEditing: true, isNewEvent: true });
     popover.componentDidMount();
     expect(find).not.toHaveBeenCalled();
+  });
+});
+
+describe('CalendarEventPopover save path and the organizer', function () {
+  let queued: any[];
+
+  beforeEach(function () {
+    queued = [];
+    spyOn(Actions, 'queueTask').andCallFake((task) => queued.push(task));
+    spyOn(SyncbackEventTask, 'forUpdating').andCallFake((opts) => opts);
     spyOn(AccountStore, 'accountForId').andReturn({ emailAddress: 'me@example.com', name: 'Me' });
   });
 

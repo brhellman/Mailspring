@@ -2676,6 +2676,9 @@ describe('SEQUENCE, so guests see an update as an update', function () {
       .filter((l) => l.startsWith('SEQUENCE:'))
       .map((l) => parseInt(l.split(':')[1], 10));
     expect(sequences).toEqual([0, 1]);
+  });
+});
+
 // ---------------------------------------------------------------------------
 
 const MEETING_WITH_ROOM_ICS = `BEGIN:VCALENDAR
@@ -2904,6 +2907,9 @@ describe('ICSEventHelpers.createICSString and the organizer', function () {
       organizer: { email: 'me@example.com', name: 'Me' },
     });
     expect(ics).not.toContain('ORGANIZER');
+  });
+});
+
 describe('ICSEventHelpers VTIMEZONE bookkeeping', function () {
   const RECURRING_BERLIN_WITH_EXCEPTION = [
     'BEGIN:VCALENDAR',
