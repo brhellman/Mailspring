@@ -708,14 +708,8 @@ export function updateEventTimes(ics: string, options: UpdateTimesOptions): stri
       : createICALTime(endDate, false, ical, originalEndZone);
   }
 
-  // Update DTSTAMP to indicate modification
+  // Update DTSTAMP; SEQUENCE is the caller's to advance once per revision.
   vevent.updatePropertyWithValue('dtstamp', nowUTC(ical));
-
-  // Increment SEQUENCE if present (for proper sync)
-  const sequence = vevent.getFirstPropertyValue('sequence');
-  if (sequence !== null) {
-    vevent.updatePropertyWithValue('sequence', (parseInt(String(sequence), 10) || 0) + 1);
-  }
 
   if (root.name === 'vcalendar') {
     syncVTimezones(root, ical, startDate);
