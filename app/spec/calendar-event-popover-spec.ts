@@ -1,4 +1,4 @@
-import { Actions, DatabaseStore, SyncbackEventTask } from 'mailspring-exports';
+import { AccountStore, Actions, DatabaseStore, SyncbackEventTask } from 'mailspring-exports';
 import { Event as MailspringEvent } from '../src/flux/models/event';
 import { CalendarEventPopover } from '../internal_packages/main-calendar/lib/core/calendar-event-popover';
 import { TimedOccurrence } from '../internal_packages/main-calendar/lib/core/calendar-data-source';
@@ -152,6 +152,7 @@ describe('CalendarEventPopover save path and the recurrence rule', function () {
 });
 
 describe('CalendarEventPopover save path and SEQUENCE', function () {
+describe('CalendarEventPopover save path and the organizer', function () {
   let queued: any[];
 
   beforeEach(function () {
@@ -240,5 +241,30 @@ describe('CalendarEventPopover and who may edit', function () {
     const popover = popoverFor({ startEditing: true, isNewEvent: true });
     popover.componentDidMount();
     expect(find).not.toHaveBeenCalled();
+    spyOn(AccountStore, 'accountForId').andReturn({ emailAddress: 'me@example.com', name: 'Me' });
+  });
+
+  it('names the account as organizer when the first guest is added to the series', async function () {
+    const event = makeEvent(FORTNIGHTLY_ICS);
+    const popover = await openEditor(event, 'Planning');
+    popover.updateAttendees([{ email: 'bo@example.com', name: 'Bo' }]);
+
+    popover._saveAllOccurrences(event);
+
+    expect(queued[0].event.ics).toContain('ORGANIZER;CN=Me:mailto:me@example.com');
+  });
+
+  it('names the account as organizer when the first guest is added to one occurrence', async function () {
+    const event = makeEvent(FORTNIGHTLY_ICS);
+    const popover = await openEditor(event, 'Planning');
+    popover.updateAttendees([{ email: 'bo@example.com', name: 'Bo' }]);
+
+    await popover._saveOccurrenceException(event);
+
+    const vevents = queued[0].event.ics.split('BEGIN:VEVENT').slice(1);
+    expect(vevents.length).toBe(2);
+    for (const vevent of vevents) {
+      expect(vevent).toContain('ORGANIZER;CN=Me:mailto:me@example.com');
+    }
   });
 });
