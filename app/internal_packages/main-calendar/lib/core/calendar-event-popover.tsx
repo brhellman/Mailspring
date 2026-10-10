@@ -99,6 +99,7 @@ interface CalendarEventPopoverProps {
   disabledCalendars?: string[];
   /** Whether the calendar containing this event is read-only */
   isCalendarReadOnly?: boolean;
+  onClosed?: () => void;
 }
 
 interface CalendarEventPopoverState {
@@ -241,6 +242,10 @@ export class CalendarEventPopover extends React.Component<
     if (this.props.startEditing && !this.props.isNewEvent) {
       this._loadEditDefaults();
     }
+  }
+
+  componentWillUnmount() {
+    this.props.onClosed?.();
   }
 
   _eventShowAs(): ShowAsOption {
