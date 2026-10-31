@@ -8,12 +8,12 @@ import {
 } from './calendar-drag-types';
 import {
   EventOccurrence,
-  coveredDates,
+  occurrenceAt,
   occurrenceStartUnix,
   occurrenceEndUnix,
 } from './calendar-data-source';
 import { CalendarDateUtils } from 'mailspring-exports';
-import { inclusiveAllDayEnd } from './calendar-helpers';
+import { formatTime, inclusiveAllDayEnd } from './calendar-helpers';
 import {
   DEFAULT_TIMED_EVENT_DURATION_SECONDS,
   MIN_EVENT_DURATION_SECONDS,
@@ -106,19 +106,13 @@ function shiftDateKeepingClock(instant: number, drawnAt: number, mouseTime: numb
  * @returns A synthetic EventOccurrence representing the drag preview
  */
 export function createDragPreviewEvent(dragState: DragState): EventOccurrence {
-  const { event, previewStart, previewEnd } = dragState;
-  // coveredDates replaces the spread's pre-drag dates. Timed previews also carry the preview
-  // instants; all-day previews carry only the shifted dates.
-  const shared = {
-    ...event,
-    ...coveredDates(previewStart, previewEnd, dragState.previewIsAllDay),
+  const { event, previewStart, previewEnd, previewIsAllDay } = dragState;
+  return {
+    ...occurrenceAt(event, { start: previewStart, end: previewEnd, isAllDay: previewIsAllDay }),
     id: `${event.id}-drag-preview`,
     isDragPreview: true,
     originalEventId: event.id,
   };
-  return dragState.previewIsAllDay
-    ? { ...shared, isAllDay: true }
-    : { ...shared, isAllDay: false, start: previewStart, end: previewEnd };
 }
 
 /**
@@ -476,9 +470,7 @@ export function formatDragPreviewTime(start: number, end: number, isAllDay: bool
     return `${startDate} - ${endDate}`;
   }
 
-  const startTime = moment.unix(start).format('h:mm A');
-  const endTime = moment.unix(end).format('h:mm A');
-  return `${startTime} - ${endTime}`;
+  return `${formatTime(start)} - ${formatTime(end)}`;
 }
 
 /** A press on empty grid space and where the pointer has gone since. */
@@ -513,12 +505,12 @@ export function createDragRange(state: CreateDragState): { start: number; end: n
 /** The range being drawn, as an occurrence, so it renders through the normal pipeline. */
 export function createNewEventPreview(state: CreateDragState): EventOccurrence {
   const range = createDragRange(state);
-  // An all-day range's end is the last day the pointer covered; coveredDates wants the
+  // An all-day range's end is the last day the pointer covered; occurrenceAt wants the
   // exclusive end, the next day's start.
   const end = state.isAllDay
     ? CalendarDateUtils.nextDayStartUnix(CalendarDateUtils.calendarDateFromUnix(range.end))
     : range.end;
-  const shared = {
+  const preview = {
     id: '__new_event_drag_preview',
     accountId: state.accountId,
     calendarId: state.calendarId,
@@ -528,12 +520,8 @@ export function createNewEventPreview(state: CreateDragState): EventOccurrence {
     organizer: null,
     attendees: [],
     isDragPreview: true,
-    ...coveredDates(range.start, end, state.isAllDay),
   } as any;
-
-  return state.isAllDay
-    ? { ...shared, isAllDay: true }
-    : { ...shared, isAllDay: false, start: range.start, end: range.end };
+  return occurrenceAt(preview, { start: range.start, end, isAllDay: state.isAllDay });
 }
 
 /** A view's events plus the new event being drawn or edited, if any. */
