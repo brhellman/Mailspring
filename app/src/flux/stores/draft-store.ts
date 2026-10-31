@@ -19,6 +19,7 @@ import SoundRegistry from '../../registries/sound-registry';
 import * as ExtensionRegistry from '../../registries/extension-registry';
 import { localized } from '../../intl';
 import { DatabaseChangeRecord } from './database-change-record';
+import AttachmentStore from './attachment-store';
 
 interface IThreadMessageModelOrId {
   thread?: Thread;
@@ -142,6 +143,7 @@ class DraftStore extends MailspringStore {
             accountId: draft.accountId,
           })
         );
+        AttachmentStore.deleteFilesOwnedByDraft(draft.files);
       } else if (session.changes.isDirty()) {
         promises.push(session.changes.commit());
       }
@@ -579,6 +581,8 @@ class DraftStore extends MailspringStore {
       return !(f.contentId && !draft.body.includes(`cid:${f.contentId}`));
     });
     if (files.length !== draft.files.length) {
+      // draftDeliverySucceeded only carries the files that are sent, so delete these now.
+      AttachmentStore.deleteFilesOwnedByDraft(draft.files.filter((f) => !files.includes(f)));
       session.changes.add({ files });
     }
 

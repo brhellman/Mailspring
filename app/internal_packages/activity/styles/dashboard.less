@@ -58,9 +58,12 @@
     display: flex;
     align-items: center;
     gap: 8px;
+    // Matches the Views home title.
     h2 {
       margin: 0;
       flex: 1;
+      font-size: 24px;
+      font-weight: @font-weight-semi-bold;
     }
     .timespan-selector {
       display: flex;
@@ -73,6 +76,17 @@
     }
     .dropdown-menu .menu {
       width: 160px;
+    }
+    // Sized to the longest account address, which often won't fit in 160px.
+    .account-selector .menu {
+      width: max-content;
+      min-width: 160px;
+      max-width: 360px;
+      .item {
+        padding-right: @padding-base-horizontal;
+        white-space: nowrap;
+        text-overflow: ellipsis;
+      }
     }
   }
 
