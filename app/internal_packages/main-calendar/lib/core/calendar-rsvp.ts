@@ -14,7 +14,12 @@ import {
 import React from 'react';
 import ICAL from 'ical.js';
 import { ProposeTimePopover } from 'mailspring-component-kit';
-import { EventOccurrence, occurrenceStartUnix, occurrenceEndUnix } from './calendar-data-source';
+import {
+  EventOccurrence,
+  occurrenceSlot,
+  occurrenceStartUnix,
+  occurrenceEndUnix,
+} from './calendar-data-source';
 import { formatCalendarDate } from '../../../../src/calendar-date';
 import { showRecurringEventDialog } from './recurring-event-dialog';
 
@@ -42,6 +47,15 @@ export function myAttendeeEmail(occurrence: EventOccurrence): string | null {
     }
   }
   return null;
+}
+
+/** The answers a guest can give, in the order the menu and the event panel offer them. */
+export function rsvpActions(): [ICSParticipantStatus, string][] {
+  return [
+    ['ACCEPTED', localized('Accept')],
+    ['TENTATIVE', localized('Maybe')],
+    ['DECLINED', localized('Decline')],
+  ];
 }
 
 /** Our current participation status for this occurrence, if we're on the guest list. */
@@ -166,7 +180,7 @@ export async function recordAndSendRSVP({
  */
 export function occurrenceRecurrenceId(occurrence: EventOccurrence): ICAL.Time | null {
   if (!occurrence.isRecurring && !occurrence.isException) return null;
-  const originalStart = occurrence.recurrenceIdStart ?? occurrenceStartUnix(occurrence);
+  const originalStart = occurrenceSlot(occurrence);
   return occurrence.isAllDay
     ? ICAL.Time.fromDateString(formatCalendarDate(occurrence.startDate))
     : ICAL.Time.fromJSDate(new Date(originalStart * 1000), true);
@@ -244,11 +258,11 @@ export async function proposeNewTimeForCalendarEvent(
 }
 
 /**
- * Opens the time picker for a counter-proposal, anchored on the event in the grid, or on the
- * window's centre when the grid has scrolled it out of view.
+ * Opens the time picker for a counter-proposal, anchored on `anchor`, else on the event in the
+ * grid, or on the window's centre when the grid has scrolled it out of view.
  */
-export function openProposeNewTimePopover(occurrence: EventOccurrence): void {
-  const eventEl = document.getElementById(occurrence.id);
+export function openProposeNewTimePopover(occurrence: EventOccurrence, anchor?: HTMLElement): void {
+  const eventEl = anchor || document.getElementById(occurrence.id);
   Actions.openPopover(
     React.createElement(ProposeTimePopover, {
       start: occurrenceStartUnix(occurrence),
