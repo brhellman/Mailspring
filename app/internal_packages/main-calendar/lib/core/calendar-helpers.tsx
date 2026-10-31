@@ -12,9 +12,14 @@ import {
   TaskQueue,
   localized,
   CalendarDateUtils,
+  CalendarUtils,
+  DraftFactory,
 } from 'mailspring-exports';
 import { ShowAsOption, defaultShowAs } from './show-as-selector';
-import { MIN_EVENT_DURATION_SECONDS } from './calendar-constants';
+import {
+  MIN_EVENT_DURATION_SECONDS,
+  DEFAULT_TIMED_EVENT_DURATION_SECONDS,
+} from './calendar-constants';
 import { EventOccurrence, coveredDates, isTimed } from './calendar-data-source';
 import { dayFraction } from './week-view-helpers';
 
@@ -329,8 +334,8 @@ export function newEventOccurrence(id: string, draft: NewEventDraft): EventOccur
 
 /**
  * A time as compact as the locale allows: a 12-hour clock drops the space before a trailing
- * meridiem, and ":00" on the hour ("10AM"); a 24-hour clock keeps LT ("10:00"), where a bare "10"
- * would not read as a time.
+ * meridiem, and ":00" on the hour ("10AM"); a 24-hour clock keeps the minutes ("10:00"), where a
+ * bare "10" would not read as a time.
  */
 export function formatShortTime(unix: number): string {
   const time = moment.unix(unix);
@@ -338,7 +343,7 @@ export function formatShortTime(unix: number): string {
 }
 
 function shortTimeFormat(time: moment.Moment): string {
-  const lt = moment.localeData().longDateFormat('LT');
+  const lt = DateUtils.localeTimeFormat();
   // moment's LT uses h for a 12-hour clock and H for a 24-hour one, as in time-picker.tsx
   if (!/h/.test(lt)) {
     return lt;
@@ -352,6 +357,10 @@ function shortTimeFormat(time: moment.Moment): string {
  * Calendar does: "7:30–8:30PM", "11:30AM–12PM".
  */
 export function formatShortTimeRange(startUnix: number, endUnix: number): string {
+  return shortTimeRange(startUnix, endUnix, '–');
+}
+
+function shortTimeRange(startUnix: number, endUnix: number, separator: string): string {
   const start = moment.unix(startUnix);
   const end = moment.unix(endUnix);
   let startFormat = shortTimeFormat(start);
@@ -360,7 +369,39 @@ export function formatShortTimeRange(startUnix: number, endUnix: number): string
   if (/h/.test(startFormat) && start.format('A') === end.format('A')) {
     startFormat = startFormat.replace(separateMeridiem, '');
   }
-  return `${start.format(startFormat)}–${end.format(shortTimeFormat(end))}`;
+  return `${start.format(startFormat)}${separator}${end.format(shortTimeFormat(end))}`;
+}
+
+/**
+ * The locale's time ("3:15 PM", "15:15"), on a 24-hour clock when the user asked for one. With
+ * `dropZeroMinutes` a 12-hour clock shows an hour on the hour as "3 PM"; a 24-hour clock keeps
+ * "15:00", where a bare "15" would not read as a time.
+ */
+export function formatTime(unix: number, dropZeroMinutes = false): string {
+  const time = moment.unix(unix);
+  const lt = DateUtils.localeTimeFormat();
+  if (dropZeroMinutes && /h/.test(lt) && time.minutes() === 0) {
+    return time.format(lt.replace(/[:.]mm/, ''));
+  }
+  return time.format(lt);
+}
+
+/** The line under a search result: the day, or days, and for a timed occurrence its times. */
+export function formatOccurrenceTime(event: EventOccurrence): string {
+  if (event.isAllDay === true) {
+    const first = moment.unix(CalendarDateUtils.dayStartUnix(event.startDate));
+    if (event.startDate === event.endDate) {
+      return first.format('ddd, MMM D, YYYY');
+    }
+    const last = moment.unix(CalendarDateUtils.dayStartUnix(event.endDate));
+    return `${first.format('MMM D')} - ${last.format('MMM D, YYYY')}`;
+  }
+  const start = moment.unix(event.start);
+  const end = moment.unix(event.end);
+  if (start.isSame(end, 'day')) {
+    return `${start.format('ddd, MMM D')} \u00B7 ${formatTime(event.start)} - ${formatTime(event.end)}`;
+  }
+  return `${start.format('MMM D')}, ${formatTime(event.start)} - ${end.format('MMM D')}, ${formatTime(event.end)}`;
 }
 
 /**
@@ -376,39 +417,10 @@ export function formatEventTimeRange(
   if (isAllDay) {
     return null;
   }
-
-  const durationMinutes = (endUnix - startUnix) / 60;
-  if (durationMinutes < 60) {
+  if ((endUnix - startUnix) / 60 < 60) {
     return null;
   }
-
-  const startDate = new Date(startUnix * 1000);
-  const endDate = new Date(endUnix * 1000);
-
-  const formatTime = (date: Date, includeAmPm: boolean) => {
-    let hours = date.getHours();
-    const minutes = date.getMinutes();
-    const ampm = hours >= 12 ? 'PM' : 'AM';
-    hours = hours % 12;
-    if (hours === 0) hours = 12;
-
-    let timeStr = String(hours);
-    if (minutes > 0) {
-      timeStr += ':' + String(minutes).padStart(2, '0');
-    }
-    if (includeAmPm) {
-      timeStr += ampm;
-    }
-    return timeStr;
-  };
-
-  const startAmPm = startDate.getHours() >= 12 ? 'PM' : 'AM';
-  const endAmPm = endDate.getHours() >= 12 ? 'PM' : 'AM';
-
-  // Only include AM/PM on start time if it differs from end time
-  const includeStartAmPm = startAmPm !== endAmPm;
-
-  return `${formatTime(startDate, includeStartAmPm)} – ${formatTime(endDate, true)}`;
+  return shortTimeRange(startUnix, endUnix, ' – ');
 }
 
 /**
@@ -419,6 +431,22 @@ export function getEditableCalendars(
   disabledCalendars: string[]
 ): Calendar[] {
   return calendars.filter((c) => !c.readOnly && !disabledCalendars.includes(c.id));
+}
+
+/**
+ * The calendar a new event starts on: one of the user's own in the account Mail would send a new
+ * message from, so an invitation goes out from that address, else the first editable one.
+ */
+export function defaultCalendarForNewEvent(
+  calendars: Calendar[],
+  disabledCalendars: string[]
+): Calendar | null {
+  const editable = getEditableCalendars(calendars, disabledCalendars);
+  const account = DraftFactory._accountForNewDraft();
+  const own = editable.find(
+    (c) => c.accountId === account.id && !CalendarUtils.isSomeoneElsesCalendar(c)
+  );
+  return own || editable[0] || null;
 }
 
 /**
@@ -520,4 +548,73 @@ export async function createCalendarEvent(options: CreateCalendarEventOptions): 
 export function centerGridScroll(viewportEl: HTMLElement, selectedEvent?: EventOccurrence): void {
   const fraction = selectedEvent && isTimed(selectedEvent) ? dayFraction(selectedEvent.start) : 0.5;
   viewportEl.scrollTop = viewportEl.scrollHeight * fraction - viewportEl.clientHeight / 2;
+}
+
+// A description is markup from whoever sent the invitation. DOMParser's document is inert, so the
+// images it references are never fetched.
+export function extractNotesFromDescription(description: string) {
+  const doc = new DOMParser().parseFromString(description, 'text/html');
+  const descriptionRoot = doc.body;
+
+  // The parsed document has no layout, so block boundaries become newlines here; Google writes
+  // each line of a description as <br>-separated HTML.
+  descriptionRoot.querySelectorAll('br').forEach((br) => br.replaceWith('\n'));
+  descriptionRoot
+    .querySelectorAll('p, div, li, tr, h1, h2, h3, h4, h5, h6, blockquote')
+    .forEach((block) => block.append('\n'));
+
+  // The parser moves <meta> tags that lead the description into <head>.
+  const els = doc.querySelectorAll('meta[itemprop=description]');
+  let notes: string = null;
+  if (els.length) {
+    notes = Array.from(els)
+      .map((el) => (el as HTMLMetaElement).content)
+      .join('\n');
+  } else {
+    notes = descriptionRoot.textContent;
+  }
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const nextNotes = notes.replace('\n\n', '\n');
+    if (nextNotes === notes) {
+      break;
+    }
+    notes = nextNotes;
+  }
+  return notes;
+}
+
+/** Anyone on the guest list besides the organizer, whom a change would email. */
+export function hasGuests(event: EventOccurrence): boolean {
+  return event.attendees.some(
+    (a) => !event.organizer || !Utils.emailIsEquivalent(a.email, event.organizer.email)
+  );
+}
+
+export function canEditInPanel(event: EventOccurrence, isCalendarReadOnly: boolean): boolean {
+  return !isCalendarReadOnly && event.isMine;
+}
+
+export function asksScope(event: EventOccurrence): boolean {
+  return event.isRecurring && !event.isException;
+}
+
+/** Edits wait in the panel's card when guests are emailed on every save, or for a scope. */
+export function holdsEdits(event: EventOccurrence, isCalendarReadOnly: boolean): boolean {
+  return canEditInPanel(event, isCalendarReadOnly) && (hasGuests(event) || asksScope(event));
+}
+
+/** The times an event takes when All day is switched: whole days covering it, or 9–10 AM on its first day. */
+export function allDayToggleTimes(
+  { startDate, endDate }: Pick<EventOccurrence, 'startDate' | 'endDate'>,
+  allDay: boolean
+) {
+  if (allDay) {
+    return {
+      start: CalendarDateUtils.dayStartUnix(startDate),
+      end: CalendarDateUtils.nextDayStartUnix(endDate),
+    };
+  }
+  const start = CalendarDateUtils.secondsIntoDayUnix(startDate, 9 * 3600);
+  return { start, end: start + DEFAULT_TIMED_EVENT_DURATION_SECONDS };
 }

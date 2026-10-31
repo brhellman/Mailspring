@@ -41,10 +41,21 @@ class _ViewsNavStore extends MailspringStore {
     this._setViewId(null);
   }
 
-  showView(viewId: string) {
+  /**
+   * With `animate: false` the home and the View go on the stack in one change, so the View
+   * appears at once instead of sliding in over a flash of the home. The nav rail opens Views
+   * this way.
+   */
+  showView(viewId: string, { animate = true }: { animate?: boolean } = {}) {
     clearFocusedThread();
-    this._showRoot();
-    Actions.pushSheet(WorkspaceStore.Sheet.ViewPage);
+    if (animate) {
+      this._showRoot();
+    } else {
+      Actions.showSheetStack([WorkspaceStore.Sheet.Views, WorkspaceStore.Sheet.ViewPage]);
+    }
+    // Refused while the calendar holds a change the user keeps editing.
+    if (!this.isShowingViews()) return;
+    if (animate) Actions.pushSheet(WorkspaceStore.Sheet.ViewPage);
     this._setViewId(viewId);
   }
 

@@ -7,12 +7,20 @@ import {
   Category,
   Actions,
   ChangeRoleMappingTask,
-  Folder,
 } from 'mailspring-exports';
 
 import CategorySelection from './category-selection';
 
 const SELECTABLE_ROLES = ['inbox', 'sent', 'drafts', 'spam', 'archive', 'trash'];
+
+// Gmail's system labels have fixed roles, which the sync engine sets again on every pass on any
+// server advertising X-GM-EXT-1, so a role chosen here would not last. The hosts cover a Google
+// account added as plain IMAP; imap.googlemail.com is Google's older name for the same server.
+const GMAIL_IMAP_HOSTS = ['imap.gmail.com', 'imap.googlemail.com'];
+
+function rolesAreFixedByServer(account: Account) {
+  return account.provider === 'gmail' || GMAIL_IMAP_HOSTS.includes(account.settings.imap_host);
+}
 
 interface State {
   assignments: {
@@ -89,23 +97,14 @@ export default class PreferencesCategoryMapper extends React.Component<
       // Account may not have completed an initial sync yet
       return false;
     }
-    if (account.provider === 'gmail' && role === 'archive') {
-      return false;
-    }
-
-    let all = this.state.all[account.id];
-    const allowLabels = account.usesLabels() && role !== 'trash' && role !== 'spam';
-    if (!allowLabels) all = all.filter((c) => c instanceof Folder);
-
     return (
       <div className="role-section" key={`${account.id}-${role}`}>
         <div className="col-left">{Category.LocalizedStringForRole[role]}:</div>
         <div className="col-right">
           <CategorySelection
-            all={all}
+            all={this.state.all[account.id]}
             current={assignments[role]}
             onSelect={(category) => this._onCategorySelection(account, role, category)}
-            allowLabels={allowLabels}
           />
         </div>
       </div>
@@ -113,6 +112,9 @@ export default class PreferencesCategoryMapper extends React.Component<
   };
 
   render() {
+    const accounts = AccountStore.accounts();
+    const mappableAccounts = accounts.filter((account) => !rolesAreFixedByServer(account));
+
     return (
       <div className="category-mapper-container">
         <h6>{localized('Default Container Folder (folder/subfolder)')}</h6>
@@ -122,7 +124,14 @@ export default class PreferencesCategoryMapper extends React.Component<
           onBlur={(e) => this._updateContainerFolderDefault()}
           onChange={(e) => this.setState({ containerFolderDefault: e.target.value })}
         />
-        {AccountStore.accounts().map((account) => (
+        {mappableAccounts.length < accounts.length && (
+          <div className="platform-note">
+            {localized(
+              'Gmail accounts must use the standard inbox, sent, trash, spam labels provided by the server.'
+            )}
+          </div>
+        )}
+        {mappableAccounts.map((account) => (
           <div key={account.id}>
             <div className="account-section-title">{account.label}</div>
             {SELECTABLE_ROLES.map((role) => this._renderRoleSection(account, role))}
