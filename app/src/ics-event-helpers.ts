@@ -1,5 +1,4 @@
 import crypto from 'crypto';
-import IcalExpander from 'ical-expander';
 import { Event } from './flux/models/event';
 import {
   parseICSString,
@@ -17,6 +16,7 @@ type ICALTime = InstanceType<ICAL['Time']>;
 type ICALProperty = InstanceType<ICAL['Property']>;
 type ICALTimezone = InstanceType<ICAL['Timezone']>;
 type ICALRecur = InstanceType<ICAL['Recur']>;
+type ICALEvent = InstanceType<ICAL['Event']>;
 
 let ICAL: ICAL = null;
 
@@ -103,7 +103,7 @@ export function generateUID(): string {
 /**
  * How many occurrences an expander may step through before giving up on one series.
  *
- * ical-expander iterates forward from DTSTART with no way to seek, so a cap limits how far
+ * expandBetween iterates forward from DTSTART with no way to seek, so a cap limits how far
  * back a series may begin rather than how much work a window costs. Too low and a long
  * running series silently expands to nothing: at 100, a weekly meeting that started three
  * years ago never reaches the present and simply disappears from the calendar. Removing the
@@ -126,8 +126,7 @@ export function expansionIterationBudget(
 ): number {
   // A master event can reach here with a null or non-finite recurrenceStart - the expansion
   // fallback guards for exactly that. NaN would survive Math.max/Math.min and become the cap
-  // itself, and ical-expander's loop is `!this.maxIterations || i < this.maxIterations`
-  // (index.js:104), so a NaN cap switches the limit off rather than truncating.
+  // itself, and `i < NaN` is never true, so the series would expand to nothing.
   if (!Number.isFinite(seriesStartUnix) || !Number.isFinite(windowEndUnix)) {
     return MIN_EXPANSION_ITERATIONS;
   }
@@ -234,6 +233,16 @@ function createAllDayEndTime(start: Date, end: Date, ical: ICAL): ICALTime {
 }
 
 /**
+ * Whether a value in `zone` is written with a TZID. ical.js writes its utcTimezone with a
+ * trailing Z and its localTimezone floating, and tells them apart by identity (Event._setTime);
+ * a TZID naming UTC reads through a zone of its own (calendar-utils knownZone), so a test on the
+ * zone's name would write that zone's values with neither a TZID nor a Z.
+ */
+function isNamedZone(zone: ICALTimezone | null | undefined, ical: ICAL): boolean {
+  return !!zone && zone !== ical.Timezone.utcTimezone && zone !== ical.Timezone.localTimezone;
+}
+
+/**
  * Creates an ICAL.Time from a Date, optionally preserving a specific timezone.
  * For timed events, this properly handles timezone conversion.
  *
@@ -253,12 +262,7 @@ function createICALTime(
   }
 
   // For timed events with a timezone to preserve
-  if (
-    preserveZone &&
-    preserveZone.tzid &&
-    preserveZone.tzid !== 'UTC' &&
-    preserveZone.tzid !== 'floating'
-  ) {
+  if (isNamedZone(preserveZone, ical)) {
     // Create the time in UTC first, then convert to the target timezone
     // This ensures the moment in time is preserved correctly
     const utcTime = ical.Time.fromJSDate(date, true); // true = use UTC
@@ -277,7 +281,7 @@ function createICALTime(
  * Adds an EXDATE property to a VEVENT, preserving the TZID parameter when needed.
  *
  * ICAL.js's `addPropertyWithValue('exdate', time)` does NOT set the TZID parameter
- * even when the time has a timezone attached. This causes ical-expander to fail to
+ * even when the time has a timezone attached. This causes the expander to fail to
  * match the EXDATE against zoned occurrences (the EXDATE is serialized as floating
  * time instead of zoned time). We must manually create the property and set TZID.
  */
@@ -288,7 +292,7 @@ function addExdateProperty(
   zone?: ICALTimezone | null
 ): void {
   const exProp = new ical.Property('exdate', vevent);
-  if (zone && zone.tzid && zone.tzid !== 'UTC' && zone.tzid !== 'floating') {
+  if (isNamedZone(zone, ical)) {
     exProp.setParameter('tzid', zone.tzid);
   }
   exProp.setValue(exdateTime);
@@ -440,6 +444,7 @@ function realignOccurrenceAnchors(
  * @param recurrenceId - The formatted RECURRENCE-ID string (used as a string fallback)
  * @param isAllDay - Whether the event is all-day (affects string-fallback comparison)
  * @param ical - The ICAL library reference
+ * @returns The removed VEVENT, or null when the occurrence had none of its own
  */
 function removeExistingExceptionVevent(
   vcalendar: ICALComponent,
@@ -447,7 +452,7 @@ function removeExistingExceptionVevent(
   recurrenceId: string,
   isAllDay: boolean,
   ical: ICAL
-): void {
+): ICALComponent | null {
   for (const existing of vcalendar.getAllSubcomponents('vevent')) {
     const ridValue = existing.getFirstPropertyValue('recurrence-id') as any;
     if (!ridValue) continue;
@@ -455,7 +460,7 @@ function removeExistingExceptionVevent(
     try {
       if (ridValue.toJSDate().getTime() === targetMs) {
         vcalendar.removeSubcomponent(existing);
-        break;
+        return existing;
       }
     } catch (_) {
       // Fallback: string comparison (e.g., if toJSDate throws for an unknown timezone)
@@ -467,10 +472,11 @@ function removeExistingExceptionVevent(
       const targetFormatted = recurrenceId.replace(/[^0-9TZ]/g, '');
       if (ridFormatted === targetFormatted || ridStr === recurrenceId) {
         vcalendar.removeSubcomponent(existing);
-        break;
+        return existing;
       }
     }
   }
+  return null;
 }
 
 /**
@@ -836,13 +842,16 @@ export function updateEventTimes(ics: string, options: UpdateTimesOptions): stri
  * be PUT to the same resource as a single update task.
  *
  * Upsert semantics: if a VEVENT with the same RECURRENCE-ID already exists in the
- * master VCALENDAR (e.g. re-editing an already-excepted occurrence), it is replaced.
+ * master VCALENDAR (e.g. re-editing an already-excepted occurrence), it is replaced by a copy of
+ * itself, so the occurrence keeps its earlier changes and SEQUENCE counts up from its own, which
+ * Google rejects going backwards.
  *
  * @param masterIcs - The master event's ICS data
  * @param originalOccurrenceStart - The original start time of the occurrence being modified (unix seconds)
  * @param newStart - New start time (unix seconds)
  * @param newEnd - New end time (unix seconds)
- * @param isAllDay - Whether this is an all-day event
+ * @param isAllDay - Whether the new times are all-day. The RECURRENCE-ID keeps the series' own value
+ *   type (RFC 5545 section 3.8.4.4), or the server matches it to no occurrence.
  * @returns Object with updated master ICS (exception embedded inline) and the RECURRENCE-ID string
  */
 export function createRecurrenceException(
@@ -863,7 +872,8 @@ export function createRecurrenceException(
 
   // Create RECURRENCE-ID value from original occurrence start
   const originalDate = new Date(originalOccurrenceStart * 1000);
-  const recurrenceId = isAllDay ? formatDateOnly(originalDate) : formatDateTimeUTC(originalDate);
+  const slotIsDate = !!masterEvent.startDate?.isDate;
+  const recurrenceId = slotIsDate ? formatDateOnly(originalDate) : formatDateTimeUTC(originalDate);
 
   // masterRoot must be a VCALENDAR (not a bare VEVENT) for inline embedding
   const vcalendar = masterRoot.name === 'vcalendar' ? masterRoot : null;
@@ -882,16 +892,18 @@ export function createRecurrenceException(
   // accumulating duplicates. The helper compares by UTC milliseconds so TZID-formatted
   // and UTC-formatted RECURRENCE-IDs are recognised as the same moment.
   const targetMs = originalDate.getTime();
-  if (vcalendar) {
-    removeExistingExceptionVevent(vcalendar, targetMs, recurrenceId, isAllDay, ical);
-  }
+  const existingException = vcalendar
+    ? removeExistingExceptionVevent(vcalendar, targetMs, recurrenceId, slotIsDate, ical)
+    : null;
 
-  // Deep-clone the master VEVENT for the exception.
+  // Deep-clone the existing exception, or else the master VEVENT, for the exception.
   // ical.Component.toJSON() returns a reference to the internal jCal array, NOT a copy.
   // Without JSON.parse/stringify the cloned component shares the same array as the master,
   // so every mutation below (removeAllProperties, updatePropertyWithValue, etc.) silently
   // mutates the master VEVENT too, producing two identical exception VEVENTs and no master.
-  const exceptionVevent = new ical.Component(JSON.parse(JSON.stringify(masterVevent.toJSON())));
+  const exceptionVevent = new ical.Component(
+    JSON.parse(JSON.stringify((existingException || masterVevent).toJSON()))
+  );
 
   // Remove recurrence rule and exclusion dates from the exception (it's a single instance)
   exceptionVevent.removeAllProperties('rrule');
@@ -902,10 +914,11 @@ export function createRecurrenceException(
   // recurrenceId string (which is also UTC via formatDateTimeUTC).
   // Using createICALTime with a named timezone produces a floating-time serialization
   // (no TZID parameter on the property) because updatePropertyWithValue does not auto-set TZID.
-  const recIdTime = isAllDay
+  const recIdTime = slotIsDate
     ? createAllDayTime(originalDate, ical)
     : ical.Time.fromJSDate(originalDate, true); // UTC → serializes as YYYYMMDDTHHMMSSz
-  exceptionVevent.updatePropertyWithValue('recurrence-id', recIdTime);
+  exceptionVevent.removeAllProperties('recurrence-id');
+  exceptionVevent.addPropertyWithValue('recurrence-id', recIdTime);
 
   // Set new times on the exception (preserve timezone)
   const newStartDate = new Date(newStart * 1000);
@@ -1006,7 +1019,7 @@ export function applyEditsToException(
  *
  * Exception DTSTART/DTEND are intentionally NOT shifted: preserving the user's explicit
  * exception times (e.g., an exception at 2AM remains at 2AM after shifting the base
- * series from 1AM to 3AM). Only RECURRENCE-ID shifts so ical-expander can still
+ * series from 1AM to 3AM). Only RECURRENCE-ID shifts so expandBetween can still
  * substitute the exception for the correct (now-shifted) occurrence slot.
  *
  * The master's EXDATEs shift too: they name instants the rule does not occur at, so left
@@ -1044,8 +1057,7 @@ export function shiftInlineExceptions(ics: string, deltaMs: number): string {
     }
     const shifted = ical.Time.fromJSDate(new Date(asDate.getTime() + deltaMs), true);
     const zone = value.zone;
-    const zoned = zone && zone.tzid && zone.tzid !== 'UTC' && zone.tzid !== 'floating';
-    return zoned ? shifted.convertToZone(zone) : shifted;
+    return isNamedZone(zone, ical) ? shifted.convertToZone(zone) : shifted;
   };
 
   for (const vevent of vcalendar.getAllSubcomponents('vevent')) {
@@ -1502,12 +1514,14 @@ function nameOccurrence(
 ): void {
   const start = dtstart.getFirstValue() as ICALTime;
   const tzid = dtstart.getParameter('tzid') as string | undefined;
-  const zoned = !start.isDate && !!tzid && ical.TimezoneService.has(tzid);
+  // A series in ical.js's utcTimezone, or under a TZID nothing defines (read floating), is named
+  // in UTC.
+  const zoned = !start.isDate && !!tzid && isNamedZone(start.zone, ical);
   let value: ICALTime;
   if (start.isDate) {
     value = instant.isDate ? instant : dateOnly(ical, instant.toJSDate());
   } else if (zoned) {
-    value = instant.convertToZone(ical.TimezoneService.get(tzid));
+    value = instant.convertToZone(start.zone);
   } else {
     value = instant.convertToZone(ical.Timezone.utcTimezone);
   }
@@ -1704,22 +1718,92 @@ export function updateEventProperty(
   return root.toString();
 }
 
-/** One occurrence of a stored event, as ical-expander reports it. */
-interface ExpandedOccurrence {
-  startDate: ICALTime;
-  endDate: ICALTime;
-  recurrenceId: ICALTime;
-  item?: { component: ICALComponent; summary: string };
-  component?: ICALComponent;
-  summary?: string;
+/**
+ * One entry of an expansion: an ICAL.Event for a VEVENT shown as itself (a one-off event, or a
+ * series' inline exception), or ical.js's occurrence details, which carry the VEVENT as `item`.
+ */
+export type ExpandedOccurrence = ICALEvent | ReturnType<ICALEvent['getOccurrenceDetails']>;
+
+/** The VEVENT an expansion entry is drawn from. */
+export function expandedEvent(entry: ExpandedOccurrence): ICALEvent {
+  return 'item' in entry ? entry.item : entry;
 }
 
-function expandBetween(ics: string, seriesStart: number, start: number, end: number) {
-  const expanded = new IcalExpander({
-    ics,
-    maxIterations: expansionIterationBudget(ics, seriesStart, end),
-  }).between(new Date(start * 1000), new Date(end * 1000));
-  return [...expanded.events, ...expanded.occurrences] as ExpandedOccurrence[];
+/**
+ * The events and occurrences of a calendar object that overlap `start`..`end` (unix seconds),
+ * events first: every one-off VEVENT, and each occurrence of a series in the window, left out
+ * where an EXDATE names it. An inline exception that keeps its slot is listed as itself among the
+ * events; one that moved is an occurrence at its new time, with the exception as `item`. An
+ * all-day entry's exclusive end is read as the last moment of its final day.
+ *
+ * The times are read through parseICSString, so an expansion places a zoned time exactly where
+ * every other reader in the app does. This follows ical-expander's between(); the package itself
+ * is not used because it bundles ical.js 1.5 and a frozen zone table of its own.
+ *
+ * @param seriesStart - DTSTART of the series in unix seconds, for expansionIterationBudget.
+ */
+export function expandBetween(
+  ics: string,
+  seriesStart: number,
+  start: number,
+  end: number
+): ExpandedOccurrence[] {
+  const ical = getICAL();
+  const { root } = parseICSString(ics);
+  const vevents = root.name === 'vevent' ? [root] : root.getAllSubcomponents('vevent');
+  const events = vevents.map((vevent) => new ical.Event(vevent));
+  const exceptions = events.filter((e) => e.isRecurrenceException());
+  const maxIterations = expansionIterationBudget(ics, seriesStart, end);
+  const after = start * 1000;
+  const before = end * 1000;
+
+  const span = (entry: { startDate: ICALTime; endDate: ICALTime }) => {
+    const from = entry.startDate.toJSDate().getTime();
+    const to = entry.endDate.toJSDate().getTime();
+    return { from, to: entry.endDate.isDate && to > from ? to - 1 : to };
+  };
+  const overlaps = ({ from, to }: { from: number; to: number }) => to >= after && from <= before;
+
+  const shownAsThemselves: ExpandedOccurrence[] = [];
+  const occurrences: ExpandedOccurrence[] = [];
+  for (const event of events) {
+    if (event.isRecurrenceException()) continue;
+    if (!event.isRecurring()) {
+      if (overlaps(span(event))) shownAsThemselves.push(event);
+      continue;
+    }
+
+    const excluded = new Set(
+      event.component
+        .getAllProperties('exdate')
+        .flatMap((prop) => prop.getValues() as ICALTime[])
+        .map((time) => time.toJSDate().getTime())
+    );
+    const iterator = event.iterator();
+    for (let i = 0; i < maxIterations; i++) {
+      const next = iterator.next();
+      if (!next) break;
+      // ical.js substitutes a related exception's own times, so a moved occurrence's start is
+      // not the rule's. Stopping on the moved start alone would end the series at the first
+      // occurrence moved past the window.
+      const instant = next.toJSDate().getTime();
+      const occurrence = event.getOccurrenceDetails(next);
+      const occurrenceSpan = span(occurrence);
+      if (instant > before && occurrenceSpan.from > before) break;
+      if (!overlaps(occurrenceSpan) || excluded.has(instant)) continue;
+
+      const start = occurrence.startDate.toJSDate().getTime();
+      const unmoved = exceptions.find(
+        (ex) => ex.uid === event.uid && ex.recurrenceId.toJSDate().getTime() === start
+      );
+      if (unmoved) {
+        shownAsThemselves.push(unmoved);
+      } else {
+        occurrences.push(occurrence);
+      }
+    }
+  }
+  return [...shownAsThemselves, ...occurrences];
 }
 
 export interface Occurrence {
@@ -1823,7 +1907,7 @@ export function findConflicts({
       continue; // one unparseable entry costs one unmentioned conflict, not the whole check
     }
     for (const entry of expanded) {
-      const item = entry.item || entry;
+      const item = expandedEvent(entry);
       if (entry.startDate.isDate || isFreeTime(item.component, addresses)) {
         continue;
       }
